@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blink Adventure (No Assets)</title>
+    <title>Blink Adventure: Calibration Edition</title>
     <style>
         body {
             margin: 0; overflow: hidden;
@@ -12,372 +12,366 @@
             display: flex; justify-content: center; align-items: center;
             height: 100vh; touch-action: none;
         }
-        canvas {
+        canvas#gameCanvas {
             border: 4px solid #2c3e50;
             background-color: #87CEEB;
             box-shadow: 0px 5px 20px rgba(0,0,0,0.4);
             max-width: 100%; max-height: 100%; width: 800px; height: auto;
             display: block;
         }
+
+        /* UI OVERLAYS */
         #ui-layer {
             position: absolute; top: 10px; left: 10px; right: 10px; pointer-events: none;
-            background: rgba(44, 62, 80, 0.95);
-            padding: 10px; border: 2px solid #1a252f; color: #ecf0f1;
-            border-radius: 8px; max-width: 400px; margin: 0 auto;
-            display: flex; flex-direction: column; gap: 8px;
+            display: flex; flex-direction: column; gap: 8px; max-width: 400px; margin: 0 auto;
+        }
+        .hud-box {
+            background: rgba(44, 62, 80, 0.9); padding: 10px; border: 2px solid #fff;
+            color: #fff; border-radius: 8px; pointer-events: auto;
         }
         .top-row { display: flex; justify-content: space-between; align-items: center; }
         #score { font-size: 20px; font-weight: 900; color: #f1c40f; }
-        #status { font-size: 12px; font-weight: bold; color: #bdc3c7; }
         
-        .meter-box { width: 100%; height: 15px; background: #34495e; border: 2px solid #1a252f; position: relative; overflow: hidden; border-radius: 4px; }
-        .meter-fill { height: 100%; background: #2ecc71; width: 0%; transition: width 0.05s ease-out; }
-        .marker { position: absolute; top: 0; bottom: 0; width: 2px; background: #ecf0f1; z-index: 2; }
-
-        .control-row { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
-        label { font-size: 11px; font-weight: bold; color: #ecf0f1; white-space: nowrap; }
-        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #f1c40f; cursor: pointer; margin-top: -6px; border: 2px solid #fff;
+        /* CALIBRATION SCREEN (The Key Change) */
+        #calibration-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(44, 62, 80, 0.95); z-index: 200;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: white; text-align: center;
         }
-        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: #95a5a6; }
-
-        #start-screen {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            background: #ecf0f1; padding: 25px; text-align: center;
-            border: 4px solid #2c3e50; box-shadow: 5px 5px 0px #000;
-            width: 85%; max-width: 400px; z-index: 100; border-radius: 10px;
+        .cam-container {
+            position: relative; width: 320px; height: 240px; background: #000;
+            border: 4px solid #fff; margin: 15px 0; border-radius: 8px; overflow: hidden;
         }
-        button {
-            background-color: #3498db; color: white; border: 3px solid #000;
-            padding: 15px; width: 100%; font-size: 18px; font-weight: 900;
-            cursor: pointer; box-shadow: 3px 3px 0 #000; margin-top: 20px;
-            font-family: 'Courier New', Courier, monospace; border-radius: 5px;
+        video#webcam {
+            width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);
         }
-        button:active { box-shadow: 0 0 0 #000; transform: translateY(3px); }
-        button:disabled { background-color: #7f8c8d; cursor: not-allowed; }
-        .error-msg { color: #fff; background: #c0392b; padding: 10px; margin-top: 10px; display: none; font-size: 12px; text-align: left; border-radius: 4px;}
+        canvas#debug-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1);
+        }
         
-        #webcam { display: none; }
+        /* METERS & SLIDERS */
+        .meter-box { width: 100%; height: 20px; background: #34495e; border: 2px solid #fff; position: relative; border-radius: 10px; overflow: hidden; margin-top:5px;}
+        .meter-fill { height: 100%; background: #2ecc71; width: 100%; transition: width 0.05s ease-out; }
+        .marker { position: absolute; top: 0; bottom: 0; width: 3px; background: #f1c40f; z-index: 2; height: 100%; box-shadow: 0 0 4px #000; }
+        
+        button.action-btn {
+            background-color: #3498db; color: white; border: 3px solid #fff;
+            padding: 12px 30px; font-size: 18px; font-weight: 900;
+            cursor: pointer; font-family: inherit; border-radius: 5px; margin-top: 15px;
+        }
+        button:disabled { background-color: #7f8c8d; opacity: 0.7; cursor: not-allowed; }
+        
+        .status-badge {
+            background: #e74c3c; padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 14px; display: inline-block;
+        }
     </style>
 </head>
 <body>
 
-    <div id="ui-layer">
-        <div class="top-row">
-            <div id="score">0m</div>
-            <div id="status">Waiting for Start...</div>
-        </div>
-        <div class="control-row">
-            <label>Blink Sensitivity:</label>
-            <input type="range" id="sensitivity" min="30" max="70" value="45" step="1">
-        </div>
-        <div class="meter-box">
-            <div id="eye-bar" class="meter-fill" style="width: 100%;"></div>
-            <div class="marker" id="thresh-marker" style="left: 45%;"></div>
-        </div>
-        <div id="level-indicator" style="margin-top:5px; font-size:10px; color:#e74c3c;">LEVEL 1</div>
-    </div>
-
-    <div id="start-screen">
-        <h1 style="font-size: 24px; margin-bottom: 10px; margin-top:0;">Blink Adventure</h1>
-        <div style="background:#bdc3c7; padding:10px; border-radius:5px; font-size:13px; text-align:left; color:#2c3e50;">
-            <p>📷 <b>Camera Access Required</b></p>
-            <p>👀 <b>Face Visible</b> = Run</p>
-            <p>😉 <b>Blink</b> = Jump</p>
-        </div>
-        <button id="start-btn">LOAD GAME</button>
-        <p id="error-log" class="error-msg"></p>
-    </div>
-
     <canvas id="gameCanvas"></canvas>
-    <video id="webcam" autoplay playsinline></video>
+
+    <div id="ui-layer" style="display:none;">
+        <div class="hud-box top-row">
+            <div id="score">0m</div>
+            <div id="game-status">RUNNING</div>
+        </div>
+        <div class="hud-box">
+             <div style="font-size:10px; display:flex; justify-content:space-between;">
+                <span>EYE OPENNESS</span>
+                <span id="blink-text">OPEN</span>
+            </div>
+            <div class="meter-box" style="height:10px;">
+                <div id="game-eye-bar" class="meter-fill"></div>
+                <div id="game-thresh-marker" class="marker" style="left: 45%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="calibration-screen">
+        <h1 style="margin:0;">CALIBRATION</h1>
+        <p style="font-size:12px; opacity:0.8; margin-bottom:5px;">Adjust slider so the bar turns RED when you blink.</p>
+        
+        <div class="cam-container">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="debug-overlay"></canvas>
+        </div>
+
+        <div id="calib-status" class="status-badge">NO FACE DETECTED</div>
+
+        <div style="width: 300px; text-align: left; margin-top: 15px;">
+            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:bold;">
+                <label>SENSITIVITY</label> 
+                <span id="sens-val">45</span>
+            </div>
+            <input type="range" id="sensitivity" min="20" max="80" value="45" style="width:100%;">
+            
+            <div class="meter-box">
+                <div id="calib-eye-bar" class="meter-fill"></div>
+                <div id="calib-thresh-marker" class="marker" style="left: 45%;"></div>
+            </div>
+        </div>
+
+        <button id="start-btn" class="action-btn" disabled>LOADING AI...</button>
+        <p id="error-log" style="color:#e74c3c; font-size:12px; max-width:300px; display:none;"></p>
+    </div>
 
     <script type="module">
         import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/+esm";
 
-        // --- DOM ELEMENTS ---
+        // ELEMENTS
+        const video = document.getElementById('webcam');
+        const debugCanvas = document.getElementById('debug-overlay');
+        const debugCtx = debugCanvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const calibStatus = document.getElementById('calib-status');
+        const calibScreen = document.getElementById('calibration-screen');
+        const uiLayer = document.getElementById('ui-layer');
+        const sensitivitySlider = document.getElementById('sensitivity');
+        const sensVal = document.getElementById('sens-val');
+        
+        // GAME ELEMENTS
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const scoreEl = document.getElementById('score');
-        const statusEl = document.getElementById('status');
-        const startScreen = document.getElementById('start-screen');
-        const startBtn = document.getElementById('start-btn');
-        const errorLog = document.getElementById('error-log');
-        const eyeBar = document.getElementById('eye-bar');
-        const sensitivitySlider = document.getElementById('sensitivity');
-        const threshMarker = document.getElementById('thresh-marker');
-        const video = document.getElementById('webcam');
+        const gameStatusEl = document.getElementById('game-status');
 
         canvas.width = 800; canvas.height = 400;
-        ctx.imageSmoothingEnabled = false; 
 
-        // --- STATE VARIABLES ---
-        let gameRunning = false;
-        let distance = 0;
-        let speedMultiplier = 1;
-        let player = { x: 150, y: 320, width: 30, height: 30, vy: 0, grounded: true };
-        let obstacles = [];
-        let clouds = [];
-        let movingMomentum = false;
-        
+        // STATE
         let faceLandmarker = null;
         let lastVideoTime = -1;
-        let eyeOpenness = 100;
         let faceDetected = false;
+        let eyeOpenness = 100; // 0-100
+        let gameRunning = false;
+        let blinkThreshold = 45;
 
-        // --- LOGGING HELPER ---
-        function log(msg) {
-            errorLog.style.display = 'block';
-            errorLog.innerText = msg;
-            console.log(msg);
-        }
+        // GAME VARS
+        let player = { x: 150, y: 320, vy: 0, grounded: true };
+        let obstacles = [];
+        let distance = 0;
+        let speedMult = 1;
 
-        // --- CORE FUNCTIONS ---
-        
-        // 1. Hook up the button
-        startBtn.addEventListener('click', async () => {
-            startBtn.disabled = true;
-            errorLog.style.display = 'none';
-            
+        // --- 1. INITIALIZATION ---
+        async function init() {
             try {
-                // Step A: Load AI
-                if (!faceLandmarker) {
-                    startBtn.innerText = "Downloading AI...";
-                    await setupVision();
-                }
-                
-                // Step B: Get Camera
-                startBtn.innerText = "Requesting Camera...";
-                await enableCam();
-                
-                // Step C: Start
-                startScreen.style.display = 'none';
-                resetGame();
-                gameRunning = true;
-                requestAnimationFrame(gameLoop);
-                
-            } catch (err) {
-                console.error(err);
-                startBtn.disabled = false;
-                startBtn.innerText = "RETRY";
-                log("Error: " + err.message + ". Check camera permissions.");
-            }
-        });
+                // Load AI
+                const filesetResolver = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+                faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    outputFaceBlendshapes: true,
+                    runningMode: "VIDEO",
+                    numFaces: 1
+                });
 
-        // 2. Vision Setup
-        async function setupVision() {
-            const filesetResolver = await FilesetResolver.forVisionTasks(
-                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-            );
-            faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-                baseOptions: {
-                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-                    delegate: "GPU"
-                },
-                outputFaceBlendshapes: true,
-                runningMode: "VIDEO",
-                numFaces: 1
-            });
-        }
-
-        async function enableCam() {
-            // Check if browser supports getUserMedia
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                throw new Error("Browser API not supported");
-            }
-            
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { width: 480, height: 360, facingMode: "user" } 
-            });
-            
-            video.srcObject = stream;
-            return new Promise((resolve) => {
-                video.onloadeddata = () => {
-                    video.play();
+                // Start Camera
+                startBtn.innerText = "ACCESSING CAM...";
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 320, height: 240, facingMode: "user" } 
+                });
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", () => {
+                    startBtn.innerText = "START GAME";
+                    startBtn.disabled = false;
                     predictWebcam();
-                    resolve();
-                };
-            });
-        }
+                });
 
+            } catch(e) {
+                document.getElementById('error-log').innerText = e.message;
+                document.getElementById('error-log').style.display = 'block';
+                startBtn.innerText = "ERROR";
+            }
+        }
+        init();
+
+        // --- 2. VISION LOOP (Calibration & Game) ---
         async function predictWebcam() {
-            if (!gameRunning) return; 
-            let startTimeMs = performance.now();
+            let now = performance.now();
             if (lastVideoTime !== video.currentTime) {
                 lastVideoTime = video.currentTime;
-                const results = faceLandmarker.detectForVideo(video, startTimeMs);
+                const results = faceLandmarker.detectForVideo(video, now);
                 
+                // Clear Debug Canvas
+                debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+                debugCanvas.width = video.videoWidth;
+                debugCanvas.height = video.videoHeight;
+
                 if (results.faceLandmarks && results.faceLandmarks.length > 0) {
                     faceDetected = true;
+                    calibStatus.innerText = "FACE DETECTED";
+                    calibStatus.style.background = "#2ecc71"; // Green
+                    
                     const landmarks = results.faceLandmarks[0];
+                    
+                    // Draw Face Dots (Visual Feedback)
+                    debugCtx.fillStyle = "#e74c3c"; 
+                    landmarks.forEach((p, i) => {
+                        // Draw only every 10th point to save perf, plus eyes
+                        if(i % 10 === 0 || (i > 130 && i < 160) || (i > 360 && i < 390)) {
+                            debugCtx.beginPath();
+                            debugCtx.arc(p.x * debugCanvas.width, p.y * debugCanvas.height, 2, 0, 2*Math.PI);
+                            debugCtx.fill();
+                        }
+                    });
+
+                    // Calculate Eye Openness
                     const leftEAR = getEAR(landmarks, 159, 145, 33, 133);
                     const rightEAR = getEAR(landmarks, 386, 374, 362, 263);
                     let avg = (leftEAR + rightEAR) / 2;
+                    // Calibrated mapping
                     eyeOpenness = Math.max(0, Math.min(100, (avg - 0.18) * 600)); 
+
                 } else {
                     faceDetected = false;
-                    eyeOpenness = 100; 
+                    calibStatus.innerText = "NO FACE";
+                    calibStatus.style.background = "#e74c3c"; // Red
+                    eyeOpenness = 100;
                 }
+
+                updateMeters();
             }
-            if(gameRunning) window.requestAnimationFrame(predictWebcam);
+            window.requestAnimationFrame(predictWebcam);
         }
 
-        function getEAR(landmarks, top, bottom, inner, outer) {
-            const dVert = Math.hypot(landmarks[top].x - landmarks[bottom].x, landmarks[top].y - landmarks[bottom].y);
-            const dHorz = Math.hypot(landmarks[inner].x - landmarks[outer].x, landmarks[inner].y - landmarks[outer].y);
-            return dVert / dHorz;
+        function getEAR(lm, t, b, i, o) {
+            const dv = Math.hypot(lm[t].x - lm[b].x, lm[t].y - lm[b].y);
+            const dh = Math.hypot(lm[i].x - lm[o].x, lm[i].y - lm[o].y);
+            return dv / dh;
         }
 
-        // 3. Game Loop
+        function updateMeters() {
+            blinkThreshold = parseInt(sensitivitySlider.value);
+            sensVal.innerText = blinkThreshold;
+
+            // Update Calibration UI
+            const calibBar = document.getElementById('calib-eye-bar');
+            const calibMarker = document.getElementById('calib-thresh-marker');
+            if(calibBar) {
+                calibBar.style.width = eyeOpenness + "%";
+                calibMarker.style.left = blinkThreshold + "%";
+                calibBar.style.background = (eyeOpenness < blinkThreshold) ? "#e74c3c" : "#2ecc71"; // Red if blinking
+            }
+
+            // Update Game UI
+            const gameBar = document.getElementById('game-eye-bar');
+            const gameMarker = document.getElementById('game-thresh-marker');
+            if(gameBar) {
+                gameBar.style.width = eyeOpenness + "%";
+                gameMarker.style.left = blinkThreshold + "%";
+                gameBar.style.background = (eyeOpenness < blinkThreshold) ? "#e74c3c" : "#2ecc71";
+            }
+        }
+
+        // --- 3. GAME CONTROL ---
+        startBtn.addEventListener('click', () => {
+            if(!faceDetected) {
+                alert("Cannot start: No face detected! Please adjust your lighting.");
+                return;
+            }
+            calibScreen.style.display = 'none';
+            uiLayer.style.display = 'block';
+            resetGame();
+            gameRunning = true;
+            gameLoop();
+        });
+
         function resetGame() {
             player.y = 320; player.vy = 0; player.grounded = true;
-            movingMomentum = false; distance = 0; speedMultiplier = 1;
-            scoreEl.innerText = "0m";
             obstacles = [{ x: 0, y: 350, w: 800, h: 50, type: 'floor' }];
+            distance = 0; scoreEl.innerText = "0m";
         }
 
-        function update() {
-            const sensitivity = parseInt(sensitivitySlider.value);
-            threshMarker.style.left = sensitivity + "%";
-            eyeBar.style.width = eyeOpenness + "%";
+        function updateGame() {
+            const isBlink = eyeOpenness < blinkThreshold;
+            const moving = faceDetected; 
 
-            let isBlink = eyeOpenness < sensitivity;
-            
+            // Logic
             if (player.grounded) {
                 if (isBlink) {
-                    player.vy = -13; // Jump Force
+                    player.vy = -14; 
                     player.grounded = false;
-                    movingMomentum = faceDetected; 
-                    statusEl.innerText = "BLINK JUMP!";
-                    statusEl.style.color = "#e74c3c";
-                    eyeBar.style.background = "#e74c3c";
+                    gameStatusEl.innerText = "JUMP!";
                 } else {
-                    movingMomentum = faceDetected;
-                    statusEl.innerText = faceDetected ? "RUNNING" : "PAUSED (No Face)";
-                    statusEl.style.color = faceDetected ? "#2ecc71" : "#bdc3c7";
-                    eyeBar.style.background = "#2ecc71";
+                    gameStatusEl.innerText = moving ? "RUNNING" : "WAITING FOR FACE";
+                    gameStatusEl.style.color = moving ? "#2ecc71" : "#e74c3c";
                 }
-            } else {
-                eyeBar.style.background = "#f1c40f";
             }
-
-            player.vy += 0.5; // Gravity
+            
+            player.vy += 0.6; // Gravity
             player.y += player.vy;
 
-            if (movingMomentum) {
-                let speed = 4 * speedMultiplier;
-                distance += speed;
-                scoreEl.innerText = Math.floor(distance / 10) + "m";
-                obstacles.forEach(ob => ob.x -= speed);
-                clouds.forEach(c => c.x -= c.speed * (speed/4));
+            if (moving) {
+                distance += 5 * speedMult;
+                scoreEl.innerText = Math.floor(distance/10) + "m";
+                obstacles.forEach(ob => ob.x -= 5 * speedMult);
                 spawnTerrain();
-                speedMultiplier = Math.min(2.0, 1 + (Math.floor(distance/1000) * 0.15));
             }
 
+            // Floor Collision
+            let onGround = false;
+            obstacles.forEach(ob => {
+                if(ob.type === 'floor') {
+                    if(player.x > ob.x && player.x < ob.x + ob.w &&
+                       player.y + 15 >= ob.y && player.y - 15 <= ob.y + ob.h && player.vy >= 0) {
+                        player.y = ob.y - 15; player.vy = 0; player.grounded = true; onGround = true;
+                    }
+                } else if(ob.type !== 'pit') {
+                     // Hit tree/house
+                     if(player.x+10 > ob.x && player.x-10 < ob.x + ob.w && player.y+10 > ob.y) {
+                         gameOver();
+                     }
+                }
+            });
+            
+            if(player.y > 450) gameOver();
             obstacles = obstacles.filter(ob => ob.x + ob.w > -100);
-            checkCollisions();
-            if (player.y > 450) gameOver();
         }
 
         function spawnTerrain() {
             let last = obstacles[obstacles.length-1];
-            if (last.x + last.w < canvas.width + 100) {
-                let isPit = Math.random() < 0.2 && last.type !== 'pit';
-                let startX = last.x + last.w;
-                
-                if (isPit) {
-                    obstacles.push({ x: startX, y: 350, w: 100 + Math.random()*50, h: 0, type: 'pit' });
+            if(last.x + last.w < 850) {
+                let isPit = Math.random() < 0.2;
+                let x = last.x + last.w;
+                if(isPit) {
+                    obstacles.push({x: x, y: 350, w: 100, h:0, type:'pit'});
                 } else {
-                    let w = 300 + Math.random()*300;
-                    obstacles.push({ x: startX, y: 350, w: w, h: 50, type: 'floor' });
-                    if (Math.random() < 0.4) {
-                        let isHouse = Math.random() > 0.7;
-                        obstacles.push({ 
-                            x: startX + 50 + Math.random()*(w-100), 
-                            y: 350 - (isHouse ? 50 : 70), 
-                            w: isHouse ? 50 : 30, 
-                            h: isHouse ? 50 : 70, 
-                            type: isHouse ? 'house' : 'tree' 
-                        });
+                    let w = 200 + Math.random()*300;
+                    obstacles.push({x: x, y: 350, w: w, h:50, type:'floor'});
+                    if(Math.random() < 0.4) {
+                        obstacles.push({x: x+50, y: 290, w: 30, h: 60, type:'tree'});
                     }
                 }
             }
         }
 
-        function checkCollisions() {
-            let p = player;
-            for (let ob of obstacles) {
-                if (ob.type === 'pit') continue;
-                if (p.x + p.width/2 > ob.x && p.x - p.width/2 < ob.x + ob.w &&
-                    p.y + p.height/2 > ob.y && p.y - p.height/2 < ob.y + ob.h) {
-                    
-                    if (ob.type === 'floor') {
-                        if (p.vy >= 0 && p.y < ob.y + 20) {
-                            p.y = ob.y - p.height/2; 
-                            p.vy = 0; 
-                            p.grounded = true;
-                        } else gameOver();
-                    } else {
-                        gameOver(); 
-                    }
-                }
-            }
+        function drawGame() {
+            ctx.clearRect(0,0,800,400);
+            obstacles.forEach(ob => {
+                if(ob.type === 'floor') { ctx.fillStyle = "#5d4037"; ctx.fillRect(ob.x, ob.y, ob.w, ob.h); ctx.fillStyle="#2ecc71"; ctx.fillRect(ob.x, ob.y, ob.w, 10); }
+                if(ob.type === 'tree') { ctx.fillStyle = "#27ae60"; ctx.beginPath(); ctx.moveTo(ob.x+15, ob.y); ctx.lineTo(ob.x, ob.y+60); ctx.lineTo(ob.x+30, ob.y+60); ctx.fill(); }
+            });
+            ctx.fillStyle = "#8B4513"; ctx.fillRect(player.x-15, player.y-15, 30, 30);
+            ctx.fillStyle = "red"; ctx.fillRect(player.x+12, player.y-5, 5, 5);
         }
 
         function gameOver() {
             gameRunning = false;
-            startScreen.style.display = 'block';
-            startBtn.innerText = "TRY AGAIN";
-            startBtn.disabled = false;
-        }
-
-        function draw() {
-            ctx.clearRect(0,0,800,400);
-            
-            // Draw Obstacles (Code Drawing instead of Images)
-            obstacles.forEach(ob => {
-                if (ob.type === 'floor') {
-                    ctx.fillStyle = "#5d4037"; ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
-                    // Add grass top
-                    ctx.fillStyle = "#27ae60"; ctx.fillRect(ob.x, ob.y, ob.w, 10);
-                } 
-                else if (ob.type === 'tree') {
-                    // Draw Tree Triangle
-                    ctx.fillStyle = "#2ecc71";
-                    ctx.beginPath();
-                    ctx.moveTo(ob.x + ob.w/2, ob.y);
-                    ctx.lineTo(ob.x, ob.y + ob.h);
-                    ctx.lineTo(ob.x + ob.w, ob.y + ob.h);
-                    ctx.fill();
-                    // Trunk
-                    ctx.fillStyle = "#3e2723";
-                    ctx.fillRect(ob.x + ob.w/2 - 5, ob.y + ob.h - 15, 10, 15);
-                }
-                else if (ob.type === 'house') {
-                    ctx.fillStyle = "#e67e22"; ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
-                    ctx.fillStyle = "#c0392b"; // Roof
-                    ctx.beginPath();
-                    ctx.moveTo(ob.x + ob.w/2, ob.y - 20);
-                    ctx.lineTo(ob.x, ob.y);
-                    ctx.lineTo(ob.x + ob.w, ob.y);
-                    ctx.fill();
-                }
-            });
-
-            // Draw Player (Reindeer Block)
-            ctx.fillStyle = "#8B4513"; 
-            ctx.fillRect(player.x-15, player.y-15, 30, 30);
-            ctx.fillStyle = "red"; // Nose
-            ctx.fillRect(player.x+12, player.y-5, 5, 5);
-            ctx.fillStyle = "#F5DEB3"; // Antlers
-            ctx.fillRect(player.x+5, player.y-22, 5, 10);
+            alert("GAME OVER! Score: " + Math.floor(distance/10) + "m");
+            resetGame();
+            gameRunning = true;
         }
 
         function gameLoop() {
-            if(gameRunning) { update(); draw(); requestAnimationFrame(gameLoop); }
+            if(gameRunning) { updateGame(); drawGame(); }
+            requestAnimationFrame(gameLoop);
         }
 
     </script>
 </body>
 </html>
+
