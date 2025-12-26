@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Runner (Diagnostic Fix)</title>
+    <title>Motion Runner (Solid Floor)</title>
     <style>
         body { margin: 0; background: #2c3e50; font-family: monospace; overflow: hidden; }
         
@@ -17,7 +17,7 @@
         /* Setup Screen */
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); z-index: 100;
+            background: rgba(0,0,0,0.95); z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;
         }
 
@@ -40,14 +40,21 @@
             padding: 15px 30px; font-size: 18px; font-weight: bold; 
             background: #27ae60; color: white; border: 2px solid #fff; cursor: pointer;
         }
-        
+
         /* Motion Meter */
         #hud {
             position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
             width: 300px; padding: 10px; background: rgba(0,0,0,0.8);
             border-radius: 8px; color: white; display: none;
         }
-        .bar-fill { height: 15px; background: #e74c3c; width: 0%; transition: 0.1s; }
+        
+        .indicator {
+            width: 100%; height: 30px; background: #555; margin-bottom: 5px;
+            display: flex; align-items: center; justify-content: center; font-weight: bold;
+        }
+        .active-jump { background: #2ecc71 !important; color: #000; } /* Bright Green when jumping */
+        
+        .bar-fill { height: 10px; background: #e74c3c; width: 0%; transition: 0.1s; }
     </style>
 </head>
 <body>
@@ -56,24 +63,22 @@
     <canvas id="gameCanvas"></canvas>
     
     <div id="hud">
-        <div style="color:#fff; font-size:12px; margin-bottom:5px;">MOTION LEVEL</div>
-        <div style="background:#555; height:15px; position:relative;">
+        <div id="jump-box" class="indicator">STANDING STILL</div>
+        <div style="background:#333; height:10px; position:relative; margin-top:5px;">
             <div id="motion-bar" class="bar-fill"></div>
-            <div style="position:absolute; left:30%; top:0; height:100%; width:2px; background:yellow;"></div>
+            <div style="position:absolute; left:20%; top:0; height:100%; width:2px; background:yellow;"></div>
         </div>
-        <input type="range" id="sens-slider" min="5" max="50" value="20" style="width:100%; margin-top:10px;">
+        <input type="range" id="sens-slider" min="5" max="50" value="15" style="width:100%; margin-top:10px;">
+        <div style="text-align:center; font-size:10px; color:#aaa; margin-top:5px;">Sensitivity Slider (Left = Sensitive)</div>
     </div>
 
     <div id="ui">
         <h1>MOTION RUNNER</h1>
-        
         <div class="cam-wrapper">
             <video id="cam-preview" autoplay playsinline muted></video>
-            <div id="cam-log">Status: Waiting for click...</div>
+            <div id="cam-log">Status: Waiting...</div>
         </div>
-
-        <button id="start-btn" onclick="startCamera()">TAP TO ALLOW CAMERA</button>
-        <p style="color:#aaa; font-size:11px; margin-top:15px;">If screen stays black, check browser permissions.</p>
+        <button id="start-btn" onclick="startCamera()">TAP TO START</button>
     </div>
 </div>
 
@@ -82,12 +87,15 @@
     const camLog = document.getElementById('cam-log');
     const startBtn = document.getElementById('start-btn');
     const motionBar = document.getElementById('motion-bar');
+    const jumpBox = document.getElementById('jump-box');
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
     // Game Vars
     let gameRunning = false;
     canvas.width = 800; canvas.height = 400;
+    
+    // Player Setup
     let player = { x: 100, y: 300, vy: 0, grounded: true };
     let obstacles = [{x:0, y:350, w:800, h:50, type:'floor'}];
     let distance = 0;
@@ -96,37 +104,30 @@
     let prevFrame = null;
     let motionScore = 0;
 
-    // --- 1. ROBUST CAMERA START ---
+    // --- 1. CAMERA ---
     async function startCamera() {
         startBtn.disabled = true;
-        camLog.innerText = "Status: Requesting Stream...";
+        camLog.innerText = "Status: Connecting...";
         
         try {
-            // Explicit constraints to force a standard video feed
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 video: { width: 320, height: 240, facingMode: "user" },
                 audio: false 
             });
             
             video.srcObject = stream;
-            camLog.innerText = "Status: Stream Acquired. Loading...";
-            
-            // Force play (sometimes browsers pause it)
             video.play();
             
             video.onloadeddata = () => {
-                camLog.innerText = "Status: Active! (" + video.videoWidth + "x" + video.videoHeight + ")";
-                camLog.style.color = "#2ecc71";
-                startBtn.innerText = "PLAY GAME";
+                camLog.innerText = "Active!";
+                startBtn.innerText = "PLAY NOW";
                 startBtn.onclick = startGame;
                 startBtn.disabled = false;
             };
 
         } catch(e) {
-            camLog.innerText = "Error: " + e.name;
-            camLog.style.color = "red";
-            alert("Camera Error: " + e.message + "\n\nTry opening in Safari/Chrome explicitly.");
-            startBtn.innerText = "RETRY";
+            camLog.innerText = "Error!";
+            alert("Camera denied. Check browser settings.");
             startBtn.disabled = false;
         }
     }
@@ -139,7 +140,7 @@
         gameLoop();
     }
 
-    // --- 2. SIMPLE MOTION DETECTION ---
+    // --- 2. MOTION DETECTION ---
     function processMotion() {
         if (!gameRunning) return;
 
@@ -153,64 +154,74 @@
 
         if (prevFrame) {
             let diff = 0;
-            // Check every 8th pixel (faster)
-            for (let i = 0; i < data.length; i += 8 * 4) {
+            for (let i = 0; i < data.length; i += 8 * 4) { // Check every 8th pixel
                 if (Math.abs(data[i] - prevFrame[i]) > 20) diff++;
             }
             motionScore = Math.min(100, diff / 2);
         }
         prevFrame = data;
 
-        // UI
+        // UI Feedback
         motionBar.style.width = motionScore + "%";
         let thresh = parseInt(document.getElementById('sens-slider').value);
         
-        if (motionScore > thresh && player.grounded) {
-             player.vy = -12; player.grounded = false;
-             motionBar.style.background = "#fff"; // Flash white on jump
+        // Trigger Jump
+        if (motionScore > thresh) {
+             if (player.grounded) {
+                 player.vy = -12; 
+                 player.grounded = false;
+             }
+             jumpBox.innerText = "JUMPING!";
+             jumpBox.classList.add("active-jump");
         } else {
-             motionBar.style.background = "#e74c3c";
+             jumpBox.innerText = "STANDING STILL";
+             jumpBox.classList.remove("active-jump");
         }
 
         requestAnimationFrame(processMotion);
     }
 
-    // --- 3. GAME ENGINE ---
+    // --- 3. GAME LOOP ---
     function gameLoop() {
         if (!gameRunning) return;
 
-        player.vy += 0.6; player.y += player.vy;
+        // Physics
+        player.vy += 0.6; // Gravity
+        player.y += player.vy;
 
-        // Ground check
-        let onGround = false;
-        obstacles.forEach(o => {
-            if(o.type==='floor' && player.x > o.x && player.x < o.x + o.w && player.y > 300) {
-                player.y = 300; player.vy = 0; player.grounded = true; onGround = true;
-            }
-        });
-        
-        if (onGround || !player.grounded) {
-            distance += 5;
-            obstacles.forEach(o => o.x -= 5);
+        // SAFETY NET: Force player to stay on screen
+        // If player goes below floor level (300), force them back up
+        if (player.y > 300) {
+            player.y = 300;
+            player.vy = 0;
+            player.grounded = true;
         }
 
-        // Spawn
+        // Run Logic (Always running if game is on)
+        distance += 5;
+        obstacles.forEach(o => o.x -= 5);
+
+        // Spawn only Trees (No Pits)
         let last = obstacles[obstacles.length-1];
         if(last.x + last.w < 850) {
-            let isPit = Math.random() < 0.2;
             let x = last.x + last.w;
-            if(isPit) obstacles.push({x:x, y:350, w:100, h:0, type:'pit'});
-            else {
-                obstacles.push({x:x, y:350, w:300, h:50, type:'floor'});
-                if(Math.random()<0.4) obstacles.push({x:x+50, y:290, w:30, h:60, type:'tree'});
+            // Add endless floor
+            obstacles.push({x:x, y:350, w:300, h:50, type:'floor'});
+            
+            // Random Tree
+            if(Math.random()<0.4) {
+                obstacles.push({x:x+100, y:290, w:30, h:60, type:'tree'});
             }
         }
 
-        // Collisions
+        // Tree Collision (Game Over)
         obstacles.forEach(o => {
-             if(o.type==='tree' && player.x>o.x && player.x<o.x+o.w && player.y>290) gameOver();
+             if(o.type==='tree' && player.x + 20 > o.x && player.x < o.x + o.w && player.y > 280) {
+                 gameOver();
+             }
         });
-        if(player.y > 450) gameOver();
+
+        // Cleanup old objects
         obstacles = obstacles.filter(o => o.x + o.w > -100);
 
         draw();
@@ -221,11 +232,19 @@
         ctx.clearRect(0,0,800,400);
         ctx.fillStyle = "#87CEEB"; ctx.fillRect(0,0,800,400);
         
+        // Floor & Trees
         obstacles.forEach(o => {
-            if(o.type==='floor') { ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); ctx.fillStyle='#2ecc71'; ctx.fillRect(o.x,o.y,o.w,10); }
-            if(o.type==='tree') { ctx.fillStyle='#27ae60'; ctx.beginPath(); ctx.moveTo(o.x+15,o.y); ctx.lineTo(o.x,o.y+60); ctx.lineTo(o.x+30,o.y+60); ctx.fill(); }
+            if(o.type==='floor') { 
+                ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); 
+                ctx.fillStyle='#2ecc71'; ctx.fillRect(o.x,o.y,o.w,10); 
+            }
+            if(o.type==='tree') { 
+                ctx.fillStyle='#27ae60'; ctx.beginPath(); 
+                ctx.moveTo(o.x+15,o.y); ctx.lineTo(o.x,o.y+60); ctx.lineTo(o.x+30,o.y+60); ctx.fill(); 
+            }
         });
 
+        // Player
         ctx.fillStyle = (player.grounded) ? '#8B4513' : '#e67e22';
         ctx.fillRect(player.x, player.y, 30, 30);
         ctx.fillStyle = "black"; ctx.font = "bold 20px monospace";
@@ -234,8 +253,15 @@
 
     function gameOver() {
         gameRunning = false;
-        alert("Game Over! Distance: " + Math.floor(distance/10) + "m");
-        location.reload();
+        // Don't reload immediately so they can see what happened
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillRect(0,0,800,400);
+        ctx.fillStyle = "white";
+        ctx.fillText("OUCH! Hit a tree.", 300, 200);
+        ctx.fillText("Tap screen to restart", 280, 240);
+        
+        // Restart on click
+        canvas.onclick = () => location.reload();
     }
 </script>
 </body>
