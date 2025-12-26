@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Runner (Solid Floor)</title>
+    <title>Motion Runner (Animated)</title>
     <style>
         body { margin: 0; background: #2c3e50; font-family: monospace; overflow: hidden; }
         
@@ -14,14 +14,12 @@
             max-width: 100%; max-height: 80vh; width: 800px; height: 400px;
         }
 
-        /* Setup Screen */
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.95); z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;
         }
 
-        /* Camera Box */
         .cam-wrapper {
             position: relative; width: 240px; height: 180px;
             border: 2px solid #f1c40f; margin-bottom: 20px; background: #000;
@@ -29,7 +27,6 @@
         
         video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         
-        /* Debug Text Overlay */
         #cam-log {
             position: absolute; top: 5px; left: 5px; right: 5px;
             color: #f1c40f; font-size: 10px; background: rgba(0,0,0,0.5); padding: 2px;
@@ -41,7 +38,6 @@
             background: #27ae60; color: white; border: 2px solid #fff; cursor: pointer;
         }
 
-        /* Motion Meter */
         #hud {
             position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
             width: 300px; padding: 10px; background: rgba(0,0,0,0.8);
@@ -52,7 +48,7 @@
             width: 100%; height: 30px; background: #555; margin-bottom: 5px;
             display: flex; align-items: center; justify-content: center; font-weight: bold;
         }
-        .active-jump { background: #2ecc71 !important; color: #000; } /* Bright Green when jumping */
+        .active-jump { background: #2ecc71 !important; color: #000; }
         
         .bar-fill { height: 10px; background: #e74c3c; width: 0%; transition: 0.1s; }
     </style>
@@ -91,7 +87,6 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // Game Vars
     let gameRunning = false;
     canvas.width = 800; canvas.height = 400;
     
@@ -99,8 +94,8 @@
     let player = { x: 100, y: 300, vy: 0, grounded: true };
     let obstacles = [{x:0, y:350, w:800, h:50, type:'floor'}];
     let distance = 0;
+    let tick = 0; // Animation Timer
     
-    // Motion Vars
     let prevFrame = null;
     let motionScore = 0;
 
@@ -154,18 +149,16 @@
 
         if (prevFrame) {
             let diff = 0;
-            for (let i = 0; i < data.length; i += 8 * 4) { // Check every 8th pixel
+            for (let i = 0; i < data.length; i += 8 * 4) { 
                 if (Math.abs(data[i] - prevFrame[i]) > 20) diff++;
             }
             motionScore = Math.min(100, diff / 2);
         }
         prevFrame = data;
 
-        // UI Feedback
         motionBar.style.width = motionScore + "%";
         let thresh = parseInt(document.getElementById('sens-slider').value);
         
-        // Trigger Jump
         if (motionScore > thresh) {
              if (player.grounded) {
                  player.vy = -12; 
@@ -184,55 +177,46 @@
     // --- 3. GAME LOOP ---
     function gameLoop() {
         if (!gameRunning) return;
+        tick++; // Increase frame counter for animation
 
-        // Physics
-        player.vy += 0.6; // Gravity
+        player.vy += 0.6; 
         player.y += player.vy;
 
-        // SAFETY NET: Force player to stay on screen
-        // If player goes below floor level (300), force them back up
         if (player.y > 300) {
             player.y = 300;
             player.vy = 0;
             player.grounded = true;
         }
 
-        // Run Logic (Always running if game is on)
         distance += 5;
         obstacles.forEach(o => o.x -= 5);
 
-        // Spawn only Trees (No Pits)
         let last = obstacles[obstacles.length-1];
         if(last.x + last.w < 850) {
             let x = last.x + last.w;
-            // Add endless floor
             obstacles.push({x:x, y:350, w:300, h:50, type:'floor'});
-            
-            // Random Tree
             if(Math.random()<0.4) {
                 obstacles.push({x:x+100, y:290, w:30, h:60, type:'tree'});
             }
         }
 
-        // Tree Collision (Game Over)
         obstacles.forEach(o => {
              if(o.type==='tree' && player.x + 20 > o.x && player.x < o.x + o.w && player.y > 280) {
                  gameOver();
              }
         });
 
-        // Cleanup old objects
         obstacles = obstacles.filter(o => o.x + o.w > -100);
 
         draw();
         requestAnimationFrame(gameLoop);
     }
 
+    // --- 4. DRAWING & ANIMATION ---
     function draw() {
         ctx.clearRect(0,0,800,400);
         ctx.fillStyle = "#87CEEB"; ctx.fillRect(0,0,800,400);
         
-        // Floor & Trees
         obstacles.forEach(o => {
             if(o.type==='floor') { 
                 ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); 
@@ -244,23 +228,61 @@
             }
         });
 
-        // Player
-        ctx.fillStyle = (player.grounded) ? '#8B4513' : '#e67e22';
-        ctx.fillRect(player.x, player.y, 30, 30);
+        // --- DRAW REINDEER ---
+        drawReindeer(player.x, player.y, player.grounded);
+
+        // Score
         ctx.fillStyle = "black"; ctx.font = "bold 20px monospace";
         ctx.fillText(`Dist: ${Math.floor(distance/10)}m`, 20, 30);
     }
 
+    function drawReindeer(x, y, isGrounded) {
+        // Body (Brown Square)
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(x, y, 30, 30);
+
+        // Nose (Red)
+        ctx.fillStyle = "red"; 
+        ctx.fillRect(x + 22, y + 5, 5, 5);
+        
+        // Antlers
+        ctx.fillStyle = "#d7ccc8";
+        ctx.fillRect(x + 5, y - 8, 3, 8);
+        ctx.fillRect(x + 15, y - 8, 3, 8);
+
+        // LEGS ANIMATION LOGIC
+        ctx.fillStyle = '#5D4037'; // Darker brown for legs
+        
+        if (!isGrounded) {
+            // --- JUMPING STATE (Bent Legs) ---
+            // Draw legs tucked up and shorter
+            ctx.fillRect(x + 5, y + 25, 8, 8); // Back leg bent
+            ctx.fillRect(x + 20, y + 22, 8, 8); // Front leg bent higher
+        } else {
+            // --- RUNNING STATE (Scissor Legs) ---
+            // Use 'tick' to alternate positions every 10 frames
+            // Math.floor(tick / 5) % 2 gives us 0 or 1 flipping rapidly
+            let runCycle = Math.floor(tick / 5) % 2;
+
+            if (runCycle === 0) {
+                // Left leg forward, Right leg back
+                ctx.fillRect(x + 5, y + 30, 6, 12); 
+                ctx.fillRect(x + 20, y + 30, 6, 6);
+            } else {
+                // Left leg back, Right leg forward
+                ctx.fillRect(x + 5, y + 30, 6, 6); 
+                ctx.fillRect(x + 20, y + 30, 6, 12);
+            }
+        }
+    }
+
     function gameOver() {
         gameRunning = false;
-        // Don't reload immediately so they can see what happened
         ctx.fillStyle = "rgba(0,0,0,0.7)";
         ctx.fillRect(0,0,800,400);
         ctx.fillStyle = "white";
         ctx.fillText("OUCH! Hit a tree.", 300, 200);
         ctx.fillText("Tap screen to restart", 280, 240);
-        
-        // Restart on click
         canvas.onclick = () => location.reload();
     }
 </script>
