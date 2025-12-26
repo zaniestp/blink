@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Runner (Animated)</title>
+    <title>Motion Runner (Calibration Mode)</title>
     <style>
         body { margin: 0; background: #2c3e50; font-family: monospace; overflow: hidden; }
         
@@ -14,15 +14,17 @@
             max-width: 100%; max-height: 80vh; width: 800px; height: 400px;
         }
 
+        /* --- UI LAYER (Start Screen) --- */
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.95); z-index: 100;
+            background: rgba(44, 62, 80, 0.98); z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;
         }
 
         .cam-wrapper {
             position: relative; width: 240px; height: 180px;
-            border: 2px solid #f1c40f; margin-bottom: 20px; background: #000;
+            border: 4px solid #fff; margin-bottom: 10px; background: #000;
+            border-radius: 8px; overflow: hidden;
         }
         
         video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
@@ -33,24 +35,34 @@
             pointer-events: none;
         }
 
-        button {
-            padding: 15px 30px; font-size: 18px; font-weight: bold; 
-            background: #27ae60; color: white; border: 2px solid #fff; cursor: pointer;
+        /* --- CALIBRATION CONTROLS (Visible in Start Screen) --- */
+        #calibration-controls {
+            width: 300px; background: rgba(0,0,0,0.3); padding: 15px;
+            border-radius: 10px; text-align: center; display: none; /* Hidden until cam loads */
         }
 
-        #hud {
-            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
-            width: 300px; padding: 10px; background: rgba(0,0,0,0.8);
-            border-radius: 8px; color: white; display: none;
+        .bar-container {
+            width: 100%; height: 20px; background: #333; position: relative;
+            margin: 10px 0; border: 2px solid #555; border-radius: 4px;
         }
         
-        .indicator {
-            width: 100%; height: 30px; background: #555; margin-bottom: 5px;
-            display: flex; align-items: center; justify-content: center; font-weight: bold;
+        .bar-fill { height: 100%; background: #e74c3c; width: 0%; transition: width 0.05s; }
+        .marker { position: absolute; left: 20%; top: 0; height: 100%; width: 3px; background: #f1c40f; z-index: 5; }
+
+        input[type=range] { width: 100%; cursor: pointer; margin-top: 10px; }
+
+        button {
+            padding: 15px 40px; font-size: 20px; font-weight: bold; 
+            background: #27ae60; color: white; border: 3px solid #fff; 
+            cursor: pointer; border-radius: 8px; margin-top: 20px;
         }
-        .active-jump { background: #2ecc71 !important; color: #000; }
-        
-        .bar-fill { height: 10px; background: #e74c3c; width: 0%; transition: 0.1s; }
+        button:disabled { background: #7f8c8d; cursor: not-allowed; border-color: #95a5a6; }
+
+        /* --- IN GAME HUD --- */
+        #game-hud {
+            position: absolute; top: 10px; left: 10px;
+            color: black; font-weight: bold; font-size: 20px; display: none;
+        }
     </style>
 </head>
 <body>
@@ -58,51 +70,71 @@
 <div id="container">
     <canvas id="gameCanvas"></canvas>
     
-    <div id="hud">
-        <div id="jump-box" class="indicator">STANDING STILL</div>
-        <div style="background:#333; height:10px; position:relative; margin-top:5px;">
-            <div id="motion-bar" class="bar-fill"></div>
-            <div style="position:absolute; left:20%; top:0; height:100%; width:2px; background:yellow;"></div>
-        </div>
-        <input type="range" id="sens-slider" min="5" max="50" value="15" style="width:100%; margin-top:10px;">
-        <div style="text-align:center; font-size:10px; color:#aaa; margin-top:5px;">Sensitivity Slider (Left = Sensitive)</div>
-    </div>
+    <div id="game-hud">Dist: 0m</div>
 
     <div id="ui">
-        <h1>MOTION RUNNER</h1>
+        <h1 style="margin:0 0 10px 0; color:#f1c40f;">MOTION RUNNER</h1>
+        
         <div class="cam-wrapper">
             <video id="cam-preview" autoplay playsinline muted></video>
-            <div id="cam-log">Status: Waiting...</div>
+            <div id="cam-log">Status: Waiting for permission...</div>
         </div>
-        <button id="start-btn" onclick="startCamera()">TAP TO START</button>
+
+        <button id="enable-cam-btn" onclick="startCamera()">1. ENABLE CAMERA</button>
+
+        <div id="calibration-controls">
+            <div style="font-size:14px; color:#aaa; margin-bottom:5px;">JUMP TEST</div>
+            
+            <div class="bar-container">
+                <div id="motion-bar" class="bar-fill"></div>
+                <div id="thresh-marker" class="marker"></div>
+            </div>
+            
+            <label style="font-size:12px;">Sensitivity Adjustment</label>
+            <input type="range" id="sens-slider" min="5" max="60" value="15">
+            
+            <p style="font-size:11px; color:#ddd; margin-top:5px;">
+                Move slider left until the bar turns <b>GREEN</b> when you jump.
+            </p>
+
+            <button id="start-game-btn" onclick="startGame()">2. START RUN</button>
+        </div>
     </div>
 </div>
 
 <script>
+    // --- DOM ELEMENTS ---
     const video = document.getElementById('cam-preview');
     const camLog = document.getElementById('cam-log');
-    const startBtn = document.getElementById('start-btn');
+    const enableBtn = document.getElementById('enable-cam-btn');
+    const startBtn = document.getElementById('start-game-btn');
+    const calibBox = document.getElementById('calibration-controls');
     const motionBar = document.getElementById('motion-bar');
-    const jumpBox = document.getElementById('jump-box');
+    const threshMarker = document.getElementById('thresh-marker');
+    const slider = document.getElementById('sens-slider');
+    const gameHud = document.getElementById('game-hud');
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    let gameRunning = false;
+    // --- GAME STATE ---
     canvas.width = 800; canvas.height = 400;
-    
-    // Player Setup
+    let cameraActive = false; // Is camera on?
+    let gameActive = false;   // Is game running?
+    let tick = 0; // Animation frame counter
+
+    // Player
     let player = { x: 100, y: 300, vy: 0, grounded: true };
     let obstacles = [{x:0, y:350, w:800, h:50, type:'floor'}];
     let distance = 0;
-    let tick = 0; // Animation Timer
-    
+
+    // Motion Detection
     let prevFrame = null;
     let motionScore = 0;
 
-    // --- 1. CAMERA ---
+    // --- 1. ENABLE CAMERA (Phase 1) ---
     async function startCamera() {
-        startBtn.disabled = true;
-        camLog.innerText = "Status: Connecting...";
+        enableBtn.disabled = true;
+        enableBtn.innerText = "CONNECTING...";
         
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -114,31 +146,30 @@
             video.play();
             
             video.onloadeddata = () => {
-                camLog.innerText = "Active!";
-                startBtn.innerText = "PLAY NOW";
-                startBtn.onclick = startGame;
-                startBtn.disabled = false;
+                camLog.innerText = "Active";
+                cameraActive = true;
+                
+                // HIDE Step 1 button, SHOW Step 2 controls
+                enableBtn.style.display = 'none';
+                calibBox.style.display = 'block';
+                
+                // Start the motion detection loop immediately (for calibration)
+                processMotionLoop();
             };
 
         } catch(e) {
-            camLog.innerText = "Error!";
-            alert("Camera denied. Check browser settings.");
-            startBtn.disabled = false;
+            camLog.innerText = "Error: " + e.message;
+            alert("Camera blocked. Please check browser settings.");
+            enableBtn.disabled = false;
+            enableBtn.innerText = "RETRY CAMERA";
         }
     }
 
-    function startGame() {
-        document.getElementById('ui').style.display = 'none';
-        document.getElementById('hud').style.display = 'block';
-        gameRunning = true;
-        processMotion();
-        gameLoop();
-    }
+    // --- 2. MOTION LOOP (Runs during Calibration & Game) ---
+    function processMotionLoop() {
+        if (!cameraActive) return;
 
-    // --- 2. MOTION DETECTION ---
-    function processMotion() {
-        if (!gameRunning) return;
-
+        // --- A. DETECT MOTION ---
         const w = 100; const h = 75;
         const workCanvas = document.createElement('canvas');
         workCanvas.width = w; workCanvas.height = h;
@@ -156,41 +187,58 @@
         }
         prevFrame = data;
 
-        motionBar.style.width = motionScore + "%";
-        let thresh = parseInt(document.getElementById('sens-slider').value);
+        // --- B. UPDATE CALIBRATION UI ---
+        let thresh = parseInt(slider.value);
         
-        if (motionScore > thresh) {
-             if (player.grounded) {
-                 player.vy = -12; 
-                 player.grounded = false;
-             }
-             jumpBox.innerText = "JUMPING!";
-             jumpBox.classList.add("active-jump");
-        } else {
-             jumpBox.innerText = "STANDING STILL";
-             jumpBox.classList.remove("active-jump");
+        // Update Marker Position
+        threshMarker.style.left = thresh + "%"; // 0-100 range matches slider
+        
+        // Update Bar Width
+        motionBar.style.width = motionScore + "%";
+        
+        // Visual Feedback: Green if above threshold (Jump), Red if below
+        let isJumpSignal = motionScore > thresh;
+        motionBar.style.background = isJumpSignal ? "#2ecc71" : "#e74c3c";
+
+        // --- C. TRIGGER JUMP (Only if game is active) ---
+        if (gameActive && isJumpSignal && player.grounded) {
+             player.vy = -12; 
+             player.grounded = false;
         }
 
-        requestAnimationFrame(processMotion);
+        requestAnimationFrame(processMotionLoop);
     }
 
-    // --- 3. GAME LOOP ---
-    function gameLoop() {
-        if (!gameRunning) return;
-        tick++; // Increase frame counter for animation
+    // --- 3. START GAME (Phase 2) ---
+    function startGame() {
+        document.getElementById('ui').style.display = 'none';
+        gameHud.style.display = 'block';
+        gameActive = true;
+        gameLoop();
+    }
 
+    // --- 4. GAME ENGINE ---
+    function gameLoop() {
+        if (!gameActive) return;
+        tick++;
+
+        // Physics
         player.vy += 0.6; 
         player.y += player.vy;
 
+        // Solid Floor Logic
         if (player.y > 300) {
             player.y = 300;
             player.vy = 0;
             player.grounded = true;
         }
 
+        // Move World
         distance += 5;
+        gameHud.innerText = `Dist: ${Math.floor(distance/10)}m`;
         obstacles.forEach(o => o.x -= 5);
 
+        // Spawn
         let last = obstacles[obstacles.length-1];
         if(last.x + last.w < 850) {
             let x = last.x + last.w;
@@ -200,6 +248,7 @@
             }
         }
 
+        // Collision
         obstacles.forEach(o => {
              if(o.type==='tree' && player.x + 20 > o.x && player.x < o.x + o.w && player.y > 280) {
                  gameOver();
@@ -212,11 +261,11 @@
         requestAnimationFrame(gameLoop);
     }
 
-    // --- 4. DRAWING & ANIMATION ---
     function draw() {
         ctx.clearRect(0,0,800,400);
         ctx.fillStyle = "#87CEEB"; ctx.fillRect(0,0,800,400);
         
+        // Draw Obstacles
         obstacles.forEach(o => {
             if(o.type==='floor') { 
                 ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); 
@@ -228,61 +277,37 @@
             }
         });
 
-        // --- DRAW REINDEER ---
         drawReindeer(player.x, player.y, player.grounded);
-
-        // Score
-        ctx.fillStyle = "black"; ctx.font = "bold 20px monospace";
-        ctx.fillText(`Dist: ${Math.floor(distance/10)}m`, 20, 30);
     }
 
     function drawReindeer(x, y, isGrounded) {
-        // Body (Brown Square)
-        ctx.fillStyle = '#8B4513';
-        ctx.fillRect(x, y, 30, 30);
+        ctx.fillStyle = '#8B4513'; ctx.fillRect(x, y, 30, 30); // Body
+        ctx.fillStyle = "red"; ctx.fillRect(x + 22, y + 5, 5, 5); // Nose
+        ctx.fillStyle = "#d7ccc8"; ctx.fillRect(x+5, y-8, 3, 8); ctx.fillRect(x+15, y-8, 3, 8); // Antlers
 
-        // Nose (Red)
-        ctx.fillStyle = "red"; 
-        ctx.fillRect(x + 22, y + 5, 5, 5);
-        
-        // Antlers
-        ctx.fillStyle = "#d7ccc8";
-        ctx.fillRect(x + 5, y - 8, 3, 8);
-        ctx.fillRect(x + 15, y - 8, 3, 8);
-
-        // LEGS ANIMATION LOGIC
-        ctx.fillStyle = '#5D4037'; // Darker brown for legs
-        
+        // Animated Legs
+        ctx.fillStyle = '#5D4037';
         if (!isGrounded) {
-            // --- JUMPING STATE (Bent Legs) ---
-            // Draw legs tucked up and shorter
-            ctx.fillRect(x + 5, y + 25, 8, 8); // Back leg bent
-            ctx.fillRect(x + 20, y + 22, 8, 8); // Front leg bent higher
+            ctx.fillRect(x + 5, y + 25, 8, 8); // Jump Tuck
+            ctx.fillRect(x + 20, y + 22, 8, 8);
         } else {
-            // --- RUNNING STATE (Scissor Legs) ---
-            // Use 'tick' to alternate positions every 10 frames
-            // Math.floor(tick / 5) % 2 gives us 0 or 1 flipping rapidly
             let runCycle = Math.floor(tick / 5) % 2;
-
             if (runCycle === 0) {
-                // Left leg forward, Right leg back
-                ctx.fillRect(x + 5, y + 30, 6, 12); 
-                ctx.fillRect(x + 20, y + 30, 6, 6);
+                ctx.fillRect(x + 5, y + 30, 6, 12); ctx.fillRect(x + 20, y + 30, 6, 6);
             } else {
-                // Left leg back, Right leg forward
-                ctx.fillRect(x + 5, y + 30, 6, 6); 
-                ctx.fillRect(x + 20, y + 30, 6, 12);
+                ctx.fillRect(x + 5, y + 30, 6, 6); ctx.fillRect(x + 20, y + 30, 6, 12);
             }
         }
     }
 
     function gameOver() {
-        gameRunning = false;
+        gameActive = false;
         ctx.fillStyle = "rgba(0,0,0,0.7)";
         ctx.fillRect(0,0,800,400);
-        ctx.fillStyle = "white";
-        ctx.fillText("OUCH! Hit a tree.", 300, 200);
-        ctx.fillText("Tap screen to restart", 280, 240);
+        ctx.fillStyle = "white"; ctx.font = "30px monospace";
+        ctx.fillText("CRASH!", 350, 180);
+        ctx.font = "20px monospace";
+        ctx.fillText("Tap to Retry", 340, 220);
         canvas.onclick = () => location.reload();
     }
 </script>
