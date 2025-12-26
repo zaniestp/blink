@@ -1,0 +1,463 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Reindeer Blink Adventure</title>
+    <style>
+        body {
+            margin: 0; overflow: hidden;
+            /* Light Blue Sky */
+            background-color: #87CEEB; 
+            font-family: 'Courier New', Courier, monospace;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; user-select: none; -webkit-user-select: none; touch-action: none;
+        }
+        canvas {
+            border: 4px solid #2c3e50;
+            background-color: #87CEEB;
+            box-shadow: 0px 5px 20px rgba(0,0,0,0.4);
+            display: block; image-rendering: pixelated; 
+            max-width: 100%; max-height: 100%; width: 800px; height: auto;
+        }
+        #ui-layer {
+            position: absolute; top: 10px; left: 10px; right: 10px; pointer-events: none;
+            background: rgba(44, 62, 80, 0.95);
+            padding: 10px; border: 2px solid #1a252f; color: #ecf0f1;
+            box-shadow: 3px 3px 0px rgba(0,0,0,0.6);
+            display: flex; flex-direction: column; gap: 8px; max-width: 400px; margin: 0 auto;
+            border-radius: 8px;
+        }
+        .top-row { display: flex; justify-content: space-between; align-items: center; }
+        
+        #score { font-size: 20px; font-weight: 900; color: #f1c40f; }
+        #level-indicator { font-size: 12px; color: #e74c3c; font-weight: bold; text-transform: uppercase; }
+        #status { font-size: 12px; font-weight: bold; color: #bdc3c7; text-align: right;}
+        
+        .meter-box { width: 100%; height: 15px; background: #34495e; border: 2px solid #1a252f; position: relative; overflow: hidden; border-radius: 4px; }
+        .meter-fill { height: 100%; background: #2ecc71; width: 0%; transition: width 0.05s ease-out; }
+        .marker { position: absolute; top: 0; bottom: 0; width: 2px; background: #ecf0f1; z-index: 2; }
+        
+        /* SLIDER STYLES */
+        .control-row { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
+        label { font-size: 11px; font-weight: bold; color: #ecf0f1; white-space: nowrap; }
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #f1c40f; cursor: pointer; margin-top: -6px; border: 2px solid #fff;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #95a5a6; border-radius: 2px;
+        }
+
+        #start-screen {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #ecf0f1; padding: 25px; text-align: center;
+            border: 4px solid #2c3e50; box-shadow: 5px 5px 0px #000;
+            width: 85%; max-width: 400px; z-index: 100; border-radius: 10px;
+        }
+        button {
+            background-color: #3498db; color: white; border: 3px solid #000;
+            padding: 15px; width: 100%; font-size: 18px; font-weight: 900;
+            cursor: pointer; box-shadow: 3px 3px 0 #000; margin-top: 20px;
+            font-family: 'Courier New', Courier, monospace; -webkit-appearance: none; border-radius: 5px;
+        }
+        button:active { box-shadow: 0 0 0 #000; transform: translateY(3px); }
+        button:disabled { background-color: #7f8c8d; color: #bdc3c7; cursor: not-allowed; }
+        .error-msg { color: #c0392b; font-weight: bold; background: #fadbd8; padding: 10px; border: 2px solid #c0392b; margin-top: 15px; display: none; font-size: 12px; text-align: left;}
+
+        #webcam { transform: scaleX(-1); display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="top-row">
+            <div id="score">0m</div>
+            <div id="status">Waiting...</div>
+        </div>
+        
+        <div class="control-row">
+            <label for="sensitivity">Blink Sensitivity:</label>
+            <input type="range" id="sensitivity" min="30" max="70" value="45" step="1">
+        </div>
+
+        <div class="meter-box">
+            <div id="eye-bar" class="meter-fill" style="width: 100%;"></div>
+            <div class="marker" id="thresh-marker" style="left: 45%;"></div>
+        </div>
+        <div id="level-indicator">Level 1</div>
+    </div>
+
+    <div id="start-screen">
+        <h1 style="font-size: 24px; margin-bottom: 10px; margin-top:0;">Blink Adventure</h1>
+        <div style="background:#bdc3c7; padding:10px; border-radius:5px; font-size:13px; text-align:left; color:#2c3e50;">
+            <p style="margin:5px 0;"> <b>Must run on a Server (or CodePen)</b></p>
+            <p style="margin:5px 0;"> <b>Face Visible</b> to Auto-Run</p>
+            <p style="margin:5px 0;"> <b>Blink</b> to Jump</p>
+        </div>
+        <button id="start-btn">LOAD VISION MODEL</button>
+        <p id="error-log" class="error-msg"></p>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+    <video id="webcam" autoplay playsinline></video>
+
+    <script type="module">
+        // Import directly from CDN to avoid global variable issues
+        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/+esm";
+
+        const CONFIG = {
+            gravity: 0.5,
+            jumpForce: -13,
+            baseSpeed: 4
+        };
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const levelEl = document.getElementById('level-indicator');
+        const statusEl = document.getElementById('status');
+        const startScreen = document.getElementById('start-screen');
+        const startBtn = document.getElementById('start-btn');
+        const errorLog = document.getElementById('error-log');
+        const eyeBar = document.getElementById('eye-bar');
+        const sensitivitySlider = document.getElementById('sensitivity');
+        const threshMarker = document.getElementById('thresh-marker');
+
+        canvas.width = 800;
+        canvas.height = 400;
+        ctx.imageSmoothingEnabled = false; 
+
+        let gameRunning = false;
+        let distance = 0;
+        let speedMultiplier = 1;
+        let player = { x: 150, y: 320, width: 30, height: 30, vy: 0, grounded: true };
+        let movingMomentum = false; 
+        let obstacles = [];
+        let clouds = [];
+
+        // Vision State
+        let visionLoaded = false;
+        let faceLandmarker = null;
+        let video = document.getElementById('webcam');
+        let lastVideoTime = -1;
+        let eyeOpenness = 100; 
+        let faceDetected = false;
+
+        // --- ASSET LOADER ---
+        const Assets = {
+            images: {},
+            sounds: {},
+            loaded: 0,
+            toLoad: 3, 
+            onReady: null,
+
+            loadImages: function() {
+                this.images.tree = new Image();
+                this.images.tree.onload = () => { this.assetLoaded(); };
+                this.images.tree.onerror = () => { this.assetLoaded(); };
+                this.images.tree.src = 'media/pine_tree.png'; 
+
+                this.images.ground = new Image();
+                this.images.ground.onload = () => { this.assetLoaded(); };
+                this.images.ground.onerror = () => { this.assetLoaded(); };
+                this.images.ground.src = 'media/mountain_ground.png'; 
+
+                this.images.house = new Image();
+                this.images.house.onload = () => { this.assetLoaded(); };
+                this.images.house.onerror = () => { this.assetLoaded(); };
+                this.images.house.src = 'media/house.png'; 
+            },
+
+            loadSounds: function() {
+                try {
+                    this.sounds.jump = new Audio('media/jump.wav');
+                    this.sounds.death = new Audio('media/death.wav');
+                    this.sounds.music = new Audio('media/music.mp3');
+                    this.sounds.music.loop = true;
+                    this.sounds.music.volume = 0.3; 
+                } catch(e) { console.warn("Sound init failed"); }
+            },
+
+            assetLoaded: function() {
+                this.loaded++;
+                if(this.loaded === this.toLoad && this.onReady) {
+                    this.onReady();
+                }
+            },
+
+            playJump: function() { if(this.sounds.jump) { this.sounds.jump.currentTime = 0; this.sounds.jump.play().catch(e=>{}); } },
+            playDeath: function() { if(this.sounds.death) { this.sounds.death.play().catch(e=>{}); } }
+        };
+
+        // --- VISION LOGIC ---
+        async function setupVision() {
+            try {
+                const filesetResolver = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+                faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    outputFaceBlendshapes: true,
+                    runningMode: "VIDEO",
+                    numFaces: 1
+                });
+                visionLoaded = true;
+                startBtn.innerText = "START GAME";
+                startBtn.disabled = false;
+            } catch(e) {
+                showError("Model Load Failed: " + e.message);
+                console.error(e);
+            }
+        }
+
+        async function enableCam() {
+            if (!faceLandmarker) return;
+            const constraints = { video: { width: 480, height: 360, facingMode: "user" } };
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", predictWebcam);
+            } catch(e) {
+                showError("Camera Access Denied or blocked by browser.");
+            }
+        }
+
+        async function predictWebcam() {
+            if (!gameRunning) return; 
+            let startTimeMs = performance.now();
+            if (lastVideoTime !== video.currentTime) {
+                lastVideoTime = video.currentTime;
+                const results = faceLandmarker.detectForVideo(video, startTimeMs);
+                
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    faceDetected = true;
+                    const landmarks = results.faceLandmarks[0];
+                    // Calculate EAR (Eye Aspect Ratio)
+                    const leftEAR = getEAR(landmarks, 159, 145, 33, 133);
+                    const rightEAR = getEAR(landmarks, 386, 374, 362, 263);
+                    
+                    let avgRatio = (leftEAR + rightEAR) / 2;
+                    let rawVal = (avgRatio - 0.15) * (100 / 0.25);
+                    eyeOpenness = Math.max(0, Math.min(100, rawVal));
+                } else {
+                    faceDetected = false;
+                    eyeOpenness = 100; 
+                }
+            }
+            if(gameRunning) window.requestAnimationFrame(predictWebcam);
+        }
+
+        function getEAR(landmarks, top, bottom, inner, outer) {
+            const dVert = Math.hypot(landmarks[top].x - landmarks[bottom].x, landmarks[top].y - landmarks[bottom].y);
+            const dHorz = Math.hypot(landmarks[inner].x - landmarks[outer].x, landmarks[inner].y - landmarks[outer].y);
+            return dVert / dHorz;
+        }
+
+        // --- GAME FLOW (Exposed to Global Scope) ---
+        window.startGame = async function() {
+            errorLog.style.display = 'none';
+
+            // 1. Load Vision First if needed
+            if (!visionLoaded) {
+                startBtn.disabled = true;
+                startBtn.innerText = "Downloading AI Model...";
+                await setupVision();
+                return;
+            }
+
+            // 2. Load Assets Second
+            if (Assets.loaded < Assets.toLoad) {
+                Assets.onReady = async () => { window.startGame(); };
+                Assets.loadImages();
+                Assets.loadSounds();
+                startBtn.innerText = "Loading Assets...";
+                return;
+            }
+
+            // 3. Start
+            startBtn.innerText = "Starting Camera...";
+            startScreen.style.display = 'none';
+            resetGame();
+            gameRunning = true;
+            
+            await enableCam();
+            if(Assets.sounds.music) Assets.sounds.music.play().catch(e => {});
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        function showError(msg) { errorLog.innerText = msg; errorLog.style.display = 'block'; }
+
+        // --- GAMEPLAY LOOP ---
+        function resetGame() {
+            player.y = 320; player.vy = 0; player.grounded = true;
+            movingMomentum = false; 
+            distance = 0; speedMultiplier = 1;
+            scoreEl.innerText = "0m"; levelEl.innerText = "Level 1";
+            obstacles = []; clouds = [];
+            obstacles.push({ x: 0, y: 350, w: 800, h: 50, type: 'floor' });
+        }
+
+        function calculateDifficulty() {
+            let level = 1 + Math.floor(distance / 1000);
+            speedMultiplier = Math.min(2.0, 1 + (level * 0.15));
+            levelEl.innerText = "Level " + level + (speedMultiplier >= 2.0 ? " (MAX)" : "");
+            return level;
+        }
+
+        function spawnTerrain() {
+            const lastObs = obstacles[obstacles.length - 1];
+            if (lastObs && (lastObs.x + lastObs.w) < canvas.width + 100) {
+                let level = calculateDifficulty();
+                let startX = lastObs.x + lastObs.w;
+                let pitChance = Math.min(0.4, 0.2 + (level * 0.02));
+                let isPit = (lastObs.type !== 'pit_marker') && Math.random() < pitChance;
+
+                if (isPit) {
+                    let gapSize = 100 + (level * 10) + Math.random() * 40; 
+                    obstacles.push({ x: startX, y: 350, w: gapSize, h: 0, type: 'pit_marker' });
+                } else {
+                    let width = 300 + Math.random() * 300;
+                    obstacles.push({ x: startX, y: 350, w: width, h: 50, type: 'floor' });
+                    
+                    if (Math.random() < Math.min(0.6, 0.3 + (level * 0.05))) {
+                        let spawnHouse = (distance > 3000 && Math.random() < (distance > 4900 ? 0.6 : 0.2));
+                        if (spawnHouse) {
+                            obstacles.push({ x: startX + 50 + Math.random() * (width - 150), y: 350 - 60, w: 60, h: 60, type: 'house' });
+                        } else {
+                            obstacles.push({ x: startX + 50 + Math.random() * (width - 150), y: 350 - 80, w: 40, h: 80, type: 'tree' });
+                        }
+                    }
+                }
+            }
+        }
+
+        function spawnClouds() {
+            if (clouds.length < 8 && Math.random() < 0.03) {
+                clouds.push({ x: canvas.width + 50, y: Math.random() * 150, size: 20 + Math.random() * 30, speed: 0.5 + Math.random() * 1 });
+            }
+        }
+
+        function update() {
+            eyeBar.style.width = eyeOpenness + "%";
+            let threshVal = parseInt(sensitivitySlider.value);
+            threshMarker.style.left = threshVal + "%";
+
+            let currentBlink = eyeOpenness < threshVal;
+            let wantsToJump = currentBlink;
+            let wantsToWalk = faceDetected; 
+
+            if (player.grounded) {
+                if (wantsToJump) {
+                    player.vy = CONFIG.jumpForce;
+                    player.grounded = false;
+                    movingMomentum = wantsToWalk; 
+                    Assets.playJump(); 
+                    statusEl.innerText = "BLINK JUMP!";
+                    statusEl.style.color = "#e74c3c";
+                    eyeBar.style.background = "#e74c3c"; 
+                } else {
+                    movingMomentum = wantsToWalk;
+                    statusEl.innerText = faceDetected ? "RUNNING" : "NO FACE";
+                    statusEl.style.color = faceDetected ? "#2ecc71" : "#bdc3c7";
+                    eyeBar.style.background = "#2ecc71";
+                }
+            } else {
+                eyeBar.style.background = "#f1c40f";
+            }
+
+            player.vy += CONFIG.gravity; 
+            player.y += player.vy;
+
+            if (movingMomentum) {
+                let currentSpeed = CONFIG.baseSpeed * speedMultiplier;
+                distance += currentSpeed;
+                scoreEl.innerText = Math.floor(distance / 10) + "m";
+                for (let i = 0; i < obstacles.length; i++) obstacles[i].x -= currentSpeed;
+                for (let i = 0; i < clouds.length; i++) clouds[i].x -= clouds[i].speed * (currentSpeed / 4);
+                spawnTerrain(); spawnClouds();
+            }
+
+            for (let i = clouds.length - 1; i >= 0; i--) { if (clouds[i].x < -100) clouds.splice(i, 1); }
+
+            player.grounded = false; 
+            let pB = player.y + player.height/2; 
+            let pR = player.x + player.width/2; 
+            let pL = player.x - player.width/2;
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                let ob = obstacles[i];
+                if (ob.x + ob.w < -100) { obstacles.splice(i, 1); continue; }
+                if (ob.type === 'pit_marker') continue;
+
+                if (pR > ob.x && pL < ob.x + ob.w && pB > ob.y && player.y - player.height/2 < ob.y + ob.h) {
+                    if (ob.type === 'tree' || ob.type === 'house') { gameOver(); return; } 
+                    if (ob.type === 'floor') {
+                        if (player.vy >= 0 && pB <= ob.y + 20) {
+                            player.y = ob.y - player.height/2; player.vy = 0; player.grounded = true;
+                        } else { gameOver(); return; }
+                    }
+                }
+            }
+            if (player.y > canvas.height + 50) gameOver();
+        }
+
+        function drawReindeer(x, y, grounded) {
+            let startX = x - 15; let startY = y - 15;
+            ctx.fillStyle = "#8B4513"; ctx.fillRect(startX + 5, startY + 10, 20, 12); 
+            ctx.fillStyle = "#A0522D"; ctx.fillRect(startX + 20, startY + 5, 10, 10); 
+            ctx.fillStyle = "#FF0000"; ctx.fillRect(startX + 28, startY + 8, 4, 4); 
+            ctx.fillStyle = "#5D4037"; 
+            if (grounded) { ctx.fillRect(startX + 8, startY + 22, 4, 8); ctx.fillRect(startX + 20, startY + 22, 4, 8); } 
+            else { ctx.fillRect(startX + 5, startY + 20, 4, 6); ctx.fillRect(startX + 22, startY + 24, 4, 6); }
+            ctx.fillStyle = "#D2B48C"; 
+            ctx.fillRect(startX + 21, startY, 2, 5); ctx.fillRect(startX + 19, startY-3, 2, 3);
+            ctx.fillRect(startX + 26, startY, 2, 5); ctx.fillRect(startX + 28, startY-3, 2, 3);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "rgba(236, 240, 241, 0.8)";
+            for (let c of clouds) { ctx.fillRect(c.x, c.y, c.size, c.size/2); ctx.fillRect(c.x+5, c.y-5, c.size-10, c.size/2+5); }
+            
+            for (let ob of obstacles) {
+                if (ob.type === 'pit_marker') continue;
+                if (ob.type === 'house') {
+                    if(Assets.images.house.complete && Assets.images.house.naturalWidth > 0) ctx.drawImage(Assets.images.house, ob.x, ob.y, ob.w, ob.h);
+                    else { ctx.fillStyle = '#9b59b6'; ctx.fillRect(ob.x, ob.y, ob.w, ob.h); }
+                }
+                else if (ob.type === 'tree') {
+                    if(Assets.images.tree.complete && Assets.images.tree.naturalWidth > 0) ctx.drawImage(Assets.images.tree, ob.x, ob.y, ob.w, ob.h);
+                    else { ctx.fillStyle = '#27ae60'; ctx.fillRect(ob.x, ob.y, ob.w, ob.h); }
+                } 
+                else {
+                    if(Assets.images.ground.complete && Assets.images.ground.naturalWidth > 0) {
+                        let pattern = ctx.createPattern(Assets.images.ground, 'repeat');
+                        ctx.fillStyle = pattern; ctx.save(); ctx.translate(ob.x, ob.y); ctx.fillRect(0, 0, ob.w, ob.h); ctx.restore();
+                    } else { ctx.fillStyle = '#5d4037'; ctx.fillRect(ob.x, ob.y, ob.w, ob.h); }
+                }
+            }
+            drawReindeer(player.x, player.y, player.grounded);
+        }
+
+        function gameOver() {
+            if(gameRunning) Assets.playDeath();
+            if(Assets.sounds.music) Assets.sounds.music.pause();
+            gameRunning = false;
+            startScreen.style.display = 'block';
+            startScreen.querySelector('h1').innerText = "GAME OVER";
+            startBtn.innerText = "TRY AGAIN";
+            startBtn.disabled = false;
+        }
+
+        function gameLoop() { if (gameRunning) { update(); draw(); requestAnimationFrame(gameLoop); } }
+    </script>
+</body>
+</html>
