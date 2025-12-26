@@ -1,14 +1,13 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blink Game (Max Compat)</title>
+    <title>Reindeer Blink (Stable Version)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.js" crossorigin="anonymous"></script>
+    
     <style>
-        body { margin: 0; background: #2c3e50; font-family: sans-serif; overflow: hidden; }
-        
-        /* Layout */
+        body { margin: 0; background: #2c3e50; font-family: sans-serif; overflow: hidden; touch-action: none; }
         #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
         
         canvas#gameCanvas { 
@@ -16,272 +15,280 @@
             max-width: 100%; max-height: 80vh; width: 800px; height: 400px;
         }
 
-        /* Calibration Overlay */
-        #overlay {
+        #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); z-index: 10;
+            background: rgba(0,0,0,0.9); z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;
         }
-
-        /* Camera Feed */
-        .cam-wrapper {
-            position: relative; width: 300px; height: 225px; 
-            border: 2px solid #f1c40f; margin: 20px; background: #000;
-        }
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.7; }
-        canvas#debug { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }
-
-        /* Status Text */
-        #log { 
-            position: absolute; bottom: 10px; left: 10px; 
-            font-family: monospace; color: #f1c40f; font-size: 12px; 
-            background: rgba(0,0,0,0.5); padding: 5px; pointer-events: none;
-        }
-
-        /* Start Button */
-        button {
-            padding: 15px 30px; font-size: 20px; font-weight: bold; 
-            background: #27ae60; color: white; border: none; cursor: pointer;
-            margin-top: 10px; disabled: true; opacity: 0.5;
-        }
-        button:enabled { opacity: 1; }
         
-        /* Meters */
-        .bar-container { width: 300px; height: 20px; background: #555; margin: 5px 0; position: relative; }
-        .bar { height: 100%; background: #2ecc71; width: 100%; transition: width 0.1s; }
-        .marker { position: absolute; top: 0; bottom: 0; width: 4px; background: yellow; left: 45%; }
+        .log-box {
+            font-family: monospace; color: #f1c40f; background: #222; 
+            padding: 10px; border: 1px solid #555; width: 300px; height: 100px; 
+            overflow-y: auto; font-size: 11px; margin-bottom: 20px; text-align: left;
+        }
 
+        button {
+            padding: 15px 30px; font-size: 18px; font-weight: bold; 
+            background: #3498db; color: white; border: 2px solid #fff; cursor: pointer;
+        }
+        button:disabled { background: #555; cursor: wait; }
+
+        video { display: none; } /* Hidden video, we rely on the debug canvas */
+        
+        #meter-container {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: 300px; padding: 10px; background: rgba(0,0,0,0.7);
+            border-radius: 8px; color: white; display: none;
+        }
+        .bar { height: 15px; background: #2ecc71; width: 100%; transition: 0.1s; }
+        .marker { height: 20px; width: 4px; background: yellow; position: absolute; top: 0; left: 45%; }
     </style>
 </head>
 <body>
 
 <div id="container">
     <canvas id="gameCanvas"></canvas>
-    <div id="log">Initializing...</div>
-
-    <div id="overlay">
-        <h1>SETUP</h1>
-        <div class="cam-wrapper">
-            <video id="webcam" autoplay playsinline muted></video>
-            <canvas id="debug"></canvas>
+    
+    <div id="meter-container">
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px;">
+            <span>EYE OPENNESS</span> <span id="status-tag">RUNNING</span>
         </div>
-        
-        <div id="status-text" style="font-weight:bold; color:red;">NO FACE DETECTED</div>
-        <div style="font-size:12px; color:#ccc;">Ensure good lighting. Wipe camera.</div>
-
-        <div class="bar-container">
-            <div id="eye-meter" class="bar"></div>
+        <div style="position:relative; height:15px; background:#444;">
+            <div id="eye-bar" class="bar"></div>
             <div id="thresh-marker" class="marker"></div>
         </div>
-        <input type="range" id="sens-slider" min="10" max="90" value="45" style="width:300px;">
-        <label>Sensitivity (Slide Left if Red Bar won't turn Green)</label>
+        <input type="range" id="sens-slider" min="10" max="90" value="45" style="width:100%; margin-top:10px;">
+        <div style="font-size:10px; color:#aaa; text-align:center;">Slide LEFT if jumps randomly</div>
+    </div>
 
-        <button id="start-btn" disabled>WAITING FOR AI...</button>
+    <div id="ui">
+        <h1>BLINK GAME</h1>
+        <div id="log" class="log-box">Log started...</div>
+        <button id="start-btn" onclick="tryStart()">INITIALIZE AI</button>
+        <p style="font-size:12px; color:#aaa; margin-top:10px;">
+            If AI fails, you can click/tap screen to jump.
+        </p>
     </div>
 </div>
 
-<script type="module">
-import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/+esm";
+<video id="webcam" autoplay playsinline muted></video>
 
-const logEl = document.getElementById('log');
-const statusText = document.getElementById('status-text');
-const video = document.getElementById('webcam');
-const debugCanvas = document.getElementById('debug');
-const debugCtx = debugCanvas.getContext('2d');
-const startBtn = document.getElementById('start-btn');
-const eyeMeter = document.getElementById('eye-meter');
-const slider = document.getElementById('sens-slider');
-const marker = document.getElementById('thresh-marker');
-
-// Game Vars
-let faceLandmarker = null;
-let lastVideoTime = -1;
-let faceDetected = false;
-let eyeOpenness = 100;
-let gameRunning = false;
-let threshold = 45;
-
-function log(msg) { logEl.innerText += "\n" + msg; console.log(msg); }
-
-// 1. SETUP AI (CPU MODE FOR MAX COMPATIBILITY)
-async function setup() {
-    try {
-        log("Downloading AI Model...");
-        const filesetResolver = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
-        );
-        
-        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-            baseOptions: {
-                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-                delegate: "CPU" // <--- CHANGED TO CPU FOR COMPATIBILITY
-            },
-            outputFaceBlendshapes: true,
-            runningMode: "VIDEO",
-            minFaceDetectionConfidence: 0.3, // <--- LOWERED THRESHOLD
-            minFacePresenceConfidence: 0.3,
-            numFaces: 1
-        });
-        
-        log("AI Ready. Starting Camera...");
-        startCamera();
-    } catch(e) {
-        log("ERROR: " + e.message);
+<script>
+    // --- UTILS ---
+    const logEl = document.getElementById('log');
+    function log(msg) { 
+        logEl.innerHTML += `> ${msg}<br>`; 
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg); 
     }
-}
 
-// 2. CAMERA
-async function startCamera() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 320, height: 240, facingMode: "user" } 
-        });
-        video.srcObject = stream;
-        video.addEventListener("loadeddata", () => {
-            log("Camera Active. Dimensions: " + video.videoWidth + "x" + video.videoHeight);
-            predict();
-            startBtn.innerText = "START GAME";
-            startBtn.disabled = false;
-        });
-    } catch(e) {
-        log("CAM ERROR: " + e.message);
-    }
-}
+    // --- VARS ---
+    let vision = null;
+    let faceLandmarker = null;
+    let video = document.getElementById('webcam');
+    let lastVideoTime = -1;
+    let eyeOpenness = 100;
+    let gameRunning = false;
+    let faceDetected = false;
+    let useMouseFallback = false;
 
-// 3. DETECTION LOOP
-async function predict() {
-    let now = performance.now();
-    
-    // Ensure video is actually playing and has data
-    if (video.currentTime !== lastVideoTime && video.readyState >= 2) {
-        lastVideoTime = video.currentTime;
-        const results = faceLandmarker.detectForVideo(video, now);
+    // --- 1. INITIALIZATION ---
+    async function tryStart() {
+        const btn = document.getElementById('start-btn');
+        btn.disabled = true;
+        btn.innerText = "DOWNLOADING...";
 
-        // Resize debug canvas to match video
-        debugCanvas.width = video.videoWidth;
-        debugCanvas.height = video.videoHeight;
-        debugCtx.clearRect(0,0, debugCanvas.width, debugCanvas.height);
+        try {
+            // Check if Library Loaded
+            if(typeof mediapipeTasksVision === 'undefined') {
+                throw new Error("Library failed to load. Check internet.");
+            }
 
-        if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-            faceDetected = true;
-            statusText.innerText = "FACE FOUND";
-            statusText.style.color = "#2ecc71";
-
-            const lm = results.faceLandmarks[0];
+            log("Library found. Fetching Model...");
             
-            // Draw Dots on Eyes
-            debugCtx.fillStyle = "red";
-            [33, 133, 159, 145, 362, 263, 386, 374].forEach(idx => {
-                const p = lm[idx];
-                debugCtx.beginPath();
-                debugCtx.arc(p.x * debugCanvas.width, p.y * debugCanvas.height, 3, 0, 2*Math.PI);
-                debugCtx.fill();
+            const { FaceLandmarker, FilesetResolver } = mediapipeTasksVision;
+            
+            // Force Google CDN for WASM (Most reliable)
+            const filesetResolver = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+
+            faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                    delegate: "CPU" // CPU is safer than GPU
+                },
+                outputFaceBlendshapes: true,
+                runningMode: "VIDEO",
+                numFaces: 1
             });
 
-            // Calculate EAR
-            const leftEAR = (Math.hypot(lm[159].x-lm[145].x, lm[159].y-lm[145].y) / Math.hypot(lm[33].x-lm[133].x, lm[33].y-lm[133].y));
-            const rightEAR = (Math.hypot(lm[386].x-lm[374].x, lm[386].y-lm[374].y) / Math.hypot(lm[362].x-lm[263].x, lm[362].y-lm[263].y));
+            log("AI Loaded! Getting Camera...");
+            btn.innerText = "ALLOW CAMERA";
             
-            let avg = (leftEAR + rightEAR) / 2;
-            // Map 0.15 (closed) -> 0.35 (open) to 0-100
-            eyeOpenness = Math.max(0, Math.min(100, (avg - 0.15) * 500));
-        
-        } else {
-            faceDetected = false;
-            statusText.innerText = "NO FACE DETECTED";
-            statusText.style.color = "red";
-            eyeOpenness = 100;
-        }
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: 320, height: 240, facingMode: "user" } 
+            });
+            
+            video.srcObject = stream;
+            video.onloadeddata = () => {
+                log("Camera Active.");
+                startGame();
+            };
 
-        // Update UI
-        threshold = parseInt(slider.value);
-        marker.style.left = threshold + "%";
-        eyeMeter.style.width = eyeOpenness + "%";
-        eyeMeter.style.background = (eyeOpenness < threshold) ? "red" : "#2ecc71"; // Red = Blink
-    }
-    
-    requestAnimationFrame(predict);
-}
-
-// 4. GAME LOGIC
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-canvas.width = 800; canvas.height = 400;
-
-let player = { x: 100, y: 300, vy: 0, grounded: true };
-let obstacles = [];
-let distance = 0;
-
-startBtn.addEventListener('click', () => {
-    document.getElementById('overlay').style.display = 'none';
-    gameRunning = true;
-    obstacles = [{x:0, y:350, w:800, h:50, type:'floor'}];
-    gameLoop();
-});
-
-function gameLoop() {
-    if(!gameRunning) return;
-    
-    // Logic
-    let isBlink = eyeOpenness < threshold;
-    let moving = faceDetected; 
-
-    if(player.grounded && isBlink) {
-        player.vy = -12; player.grounded = false;
-    }
-    player.vy += 0.6; player.y += player.vy;
-    
-    // Move world
-    if(moving) {
-        distance += 5;
-        obstacles.forEach(o => o.x -= 5);
-        
-        // Spawn
-        let last = obstacles[obstacles.length-1];
-        if(last.x + last.w < 850) {
-            let isPit = Math.random() < 0.2;
-            let x = last.x + last.w;
-            if(isPit) obstacles.push({x:x, y:350, w:100, h:0, type:'pit'});
-            else {
-                obstacles.push({x:x, y:350, w:300, h:50, type:'floor'});
-                if(Math.random()<0.4) obstacles.push({x:x+50, y:290, w:30, h:60, type:'tree'});
+        } catch(e) {
+            log("ERROR: " + e.message);
+            btn.innerText = "PLAY WITHOUT AI";
+            btn.style.background = "#e74c3c";
+            btn.disabled = false;
+            // Allow fallback click mode
+            btn.onclick = () => {
+                useMouseFallback = true;
+                startGame();
             }
         }
     }
-    
-    // Collision
-    let onG = false;
-    obstacles.forEach(o => {
-        if(o.type==='floor' && player.x>o.x && player.x<o.x+o.w && player.y>300) {
-            player.y=300; player.vy=0; player.grounded=true; onG=true;
+
+    function startGame() {
+        document.getElementById('ui').style.display = 'none';
+        document.getElementById('meter-container').style.display = 'block';
+        gameRunning = true;
+        
+        // Start loops
+        if(!useMouseFallback) predictLoop();
+        gameLoop();
+    }
+
+    // --- 2. VISION LOOP ---
+    async function predictLoop() {
+        if(!gameRunning) return;
+        let now = performance.now();
+        
+        if (video.currentTime !== lastVideoTime && video.readyState >= 2) {
+            lastVideoTime = video.currentTime;
+            const result = faceLandmarker.detectForVideo(video, now);
+            
+            if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+                faceDetected = true;
+                const lm = result.faceLandmarks[0];
+                
+                // EAR Logic
+                const leftEAR = (Math.hypot(lm[159].x-lm[145].x, lm[159].y-lm[145].y) / Math.hypot(lm[33].x-lm[133].x, lm[33].y-lm[133].y));
+                const rightEAR = (Math.hypot(lm[386].x-lm[374].x, lm[386].y-lm[374].y) / Math.hypot(lm[362].x-lm[263].x, lm[362].y-lm[263].y));
+                
+                let avg = (leftEAR + rightEAR) / 2;
+                eyeOpenness = Math.max(0, Math.min(100, (avg - 0.15) * 500));
+                
+                document.getElementById('status-tag').innerText = "FACE OK";
+                document.getElementById('status-tag').style.color = "#2ecc71";
+            } else {
+                faceDetected = false;
+                eyeOpenness = 100;
+                document.getElementById('status-tag').innerText = "NO FACE";
+                document.getElementById('status-tag').style.color = "#e74c3c";
+            }
+
+            // UI Update
+            const thresh = parseInt(document.getElementById('sens-slider').value);
+            document.getElementById('eye-bar').style.width = eyeOpenness + "%";
+            document.getElementById('thresh-marker').style.left = thresh + "%";
+            
+            if(eyeOpenness < thresh) document.getElementById('eye-bar').style.background = "red";
+            else document.getElementById('eye-bar').style.background = "#2ecc71";
         }
-        else if(o.type==='tree' && player.x>o.x && player.x<o.x+o.w && player.y>290) {
-             alert("Game Over! Score: " + distance); gameRunning=false; location.reload();
+        requestAnimationFrame(predictLoop);
+    }
+
+    // --- 3. GAME LOGIC ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 800; canvas.height = 400;
+
+    let player = { x: 100, y: 300, vy: 0, grounded: true };
+    let obstacles = [{x:0, y:350, w:800, h:50, type:'floor'}];
+    let distance = 0;
+
+    // Mouse Fallback
+    window.addEventListener('mousedown', () => { if(useMouseFallback && player.grounded) player.vy = -12; });
+    window.addEventListener('touchstart', () => { if(useMouseFallback && player.grounded) player.vy = -12; });
+
+    function gameLoop() {
+        if(!gameRunning) return;
+
+        // Jump Trigger
+        let thresh = parseInt(document.getElementById('sens-slider').value);
+        let blinkJump = !useMouseFallback && (eyeOpenness < thresh);
+        
+        // Auto-run if face detected OR mouse mode
+        let shouldRun = faceDetected || useMouseFallback;
+
+        if (player.grounded) {
+            if (blinkJump) {
+                player.vy = -12; 
+                player.grounded = false;
+            }
         }
-    });
-    if(player.y > 450) { alert("Fell in pit!"); location.reload(); }
-    
-    // Draw
-    ctx.clearRect(0,0,800,400);
-    obstacles.forEach(o => {
-        if(o.type==='floor') { ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); ctx.fillStyle='green'; ctx.fillRect(o.x,o.y,o.w,10);}
-        if(o.type==='tree') { ctx.fillStyle='darkgreen'; ctx.fillRect(o.x,o.y,o.w,o.h); }
-    });
-    
-    // Player
-    ctx.fillStyle = isBlink ? 'orange' : 'brown'; 
-    ctx.fillRect(player.x, player.y, 30, 30);
-    
-    // HUD
-    ctx.fillStyle = "black"; ctx.font = "20px monospace";
-    ctx.fillText("Dist: " + Math.floor(distance/10) + "m", 10, 30);
-    if(!moving) ctx.fillText("WAITING FOR FACE...", 300, 200);
+        
+        player.vy += 0.6; 
+        player.y += player.vy;
 
-    requestAnimationFrame(gameLoop);
-}
+        // Move World
+        if (shouldRun) {
+            distance += 5;
+            obstacles.forEach(o => o.x -= 5);
+            
+            // Spawn
+            let last = obstacles[obstacles.length-1];
+            if(last.x + last.w < 850) {
+                let isPit = Math.random() < 0.2;
+                let x = last.x + last.w;
+                if(isPit) obstacles.push({x:x, y:350, w:100, h:0, type:'pit'});
+                else {
+                    obstacles.push({x:x, y:350, w:300, h:50, type:'floor'});
+                    if(Math.random()<0.4) obstacles.push({x:x+50, y:290, w:30, h:60, type:'tree'});
+                }
+            }
+        }
 
-setup();
+        // Collisions
+        obstacles.forEach(o => {
+            if(o.type==='floor' && player.x>o.x && player.x<o.x+o.w && player.y>300) {
+                player.y=300; player.vy=0; player.grounded=true;
+            }
+            if(o.type==='tree' && player.x>o.x && player.x<o.x+o.w && player.y>290) {
+                 gameOver();
+            }
+        });
+        if(player.y > 450) gameOver();
 
+        // Cleanup
+        obstacles = obstacles.filter(o => o.x + o.w > -100);
+
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function draw() {
+        ctx.clearRect(0,0,800,400);
+        obstacles.forEach(o => {
+            if(o.type==='floor') { ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); ctx.fillStyle='green'; ctx.fillRect(o.x,o.y,o.w,10);}
+            if(o.type==='tree') { ctx.fillStyle='darkgreen'; ctx.fillRect(o.x,o.y,o.w,o.h); }
+        });
+        
+        ctx.fillStyle = (player.grounded) ? 'brown' : 'orange';
+        ctx.fillRect(player.x, player.y, 30, 30);
+        
+        ctx.fillStyle = "black"; ctx.font = "20px monospace";
+        ctx.fillText(`Dist: ${Math.floor(distance/10)}m`, 20, 30);
+        if(useMouseFallback) ctx.fillText("MOUSE MODE", 20, 60);
+    }
+
+    function gameOver() {
+        gameRunning = false;
+        alert("Game Over! Distance: " + Math.floor(distance/10) + "m");
+        location.reload();
+    }
 </script>
 </body>
 </html>
+
