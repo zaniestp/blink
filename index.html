@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion Adventure (Offline Compatible)</title>
+    <title>Motion Runner (Diagnostic Fix)</title>
     <style>
-        body { margin: 0; background: #2c3e50; font-family: sans-serif; overflow: hidden; touch-action: none; }
+        body { margin: 0; background: #2c3e50; font-family: monospace; overflow: hidden; }
         
         #container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
         
@@ -17,34 +17,37 @@
         /* Setup Screen */
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(44, 62, 80, 0.95); z-index: 100;
+            background: rgba(0,0,0,0.9); z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;
         }
 
-        h1 { margin-bottom: 10px; font-size: 24px; text-transform: uppercase; color: #f1c40f; }
+        /* Camera Box */
+        .cam-wrapper {
+            position: relative; width: 240px; height: 180px;
+            border: 2px solid #f1c40f; margin-bottom: 20px; background: #000;
+        }
+        
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        /* Debug Text Overlay */
+        #cam-log {
+            position: absolute; top: 5px; left: 5px; right: 5px;
+            color: #f1c40f; font-size: 10px; background: rgba(0,0,0,0.5); padding: 2px;
+            pointer-events: none;
+        }
 
         button {
             padding: 15px 30px; font-size: 18px; font-weight: bold; 
-            background: #27ae60; color: white; border: 3px solid #fff; cursor: pointer; border-radius: 8px;
-            margin-top: 20px;
+            background: #27ae60; color: white; border: 2px solid #fff; cursor: pointer;
         }
-        button:hover { transform: scale(1.05); }
-
+        
         /* Motion Meter */
         #hud {
             position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
             width: 300px; padding: 10px; background: rgba(0,0,0,0.8);
             border-radius: 8px; color: white; display: none;
         }
-        .bar-bg { height: 15px; background: #444; position: relative; margin-top: 5px; }
-        .bar-fill { height: 100%; background: #e74c3c; width: 0%; transition: 0.05s; }
-        .marker { height: 100%; width: 4px; background: yellow; position: absolute; top: 0; left: 30%; }
-
-        /* Small Preview */
-        #cam-preview {
-            width: 160px; height: 120px; border: 2px solid white; margin-top: 10px; transform: scaleX(-1);
-            background: black; object-fit: cover;
-        }
+        .bar-fill { height: 15px; background: #e74c3c; width: 0%; transition: 0.1s; }
     </style>
 </head>
 <body>
@@ -53,154 +56,132 @@
     <canvas id="gameCanvas"></canvas>
     
     <div id="hud">
-        <div style="display:flex; justify-content:space-between; font-size:12px;">
-            <span>MOTION LEVEL</span> <span id="status">STILL</span>
-        </div>
-        <div class="bar-bg">
+        <div style="color:#fff; font-size:12px; margin-bottom:5px;">MOTION LEVEL</div>
+        <div style="background:#555; height:15px; position:relative;">
             <div id="motion-bar" class="bar-fill"></div>
-            <div id="thresh-marker" class="marker"></div>
+            <div style="position:absolute; left:30%; top:0; height:100%; width:2px; background:yellow;"></div>
         </div>
-        <input type="range" id="sens-slider" min="10" max="80" value="30" style="width:100%; margin-top:10px;">
-        <div style="font-size:10px; color:#aaa; text-align:center;">Sensitivity (Lower = Easier Jump)</div>
+        <input type="range" id="sens-slider" min="5" max="50" value="20" style="width:100%; margin-top:10px;">
     </div>
 
     <div id="ui">
-        <h1>Motion Runner</h1>
-        <p style="max-width: 300px; text-align: center; font-size: 14px; line-height: 1.5;">
-            1. <b>Allow Camera</b> (No download needed)<br>
-            2. <b>Move Head / Wave</b> to Jump<br>
-            3. Stay still to run normally.
-        </p>
-        <video id="cam-preview" autoplay playsinline muted></video>
-        <button id="start-btn" onclick="initCam()">ENABLE CAMERA</button>
-        <p id="error-msg" style="color:#e74c3c; font-size:12px; margin-top:10px; display:none;"></p>
+        <h1>MOTION RUNNER</h1>
+        
+        <div class="cam-wrapper">
+            <video id="cam-preview" autoplay playsinline muted></video>
+            <div id="cam-log">Status: Waiting for click...</div>
+        </div>
+
+        <button id="start-btn" onclick="startCamera()">TAP TO ALLOW CAMERA</button>
+        <p style="color:#aaa; font-size:11px; margin-top:15px;">If screen stays black, check browser permissions.</p>
     </div>
 </div>
 
 <script>
-    // --- VARIABLES ---
     const video = document.getElementById('cam-preview');
+    const camLog = document.getElementById('cam-log');
     const startBtn = document.getElementById('start-btn');
-    const hud = document.getElementById('hud');
     const motionBar = document.getElementById('motion-bar');
-    const statusText = document.getElementById('status');
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // Motion Detection Vars
-    let prevFrame = null;
-    let motionScore = 0;
-    let gameRunning = false;
-    
     // Game Vars
+    let gameRunning = false;
     canvas.width = 800; canvas.height = 400;
     let player = { x: 100, y: 300, vy: 0, grounded: true };
     let obstacles = [{x:0, y:350, w:800, h:50, type:'floor'}];
     let distance = 0;
+    
+    // Motion Vars
+    let prevFrame = null;
+    let motionScore = 0;
 
-    // --- 1. CAMERA SETUP ---
-    async function initCam() {
+    // --- 1. ROBUST CAMERA START ---
+    async function startCamera() {
         startBtn.disabled = true;
-        startBtn.innerText = "STARTING...";
+        camLog.innerText = "Status: Requesting Stream...";
         
         try {
+            // Explicit constraints to force a standard video feed
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { width: 320, height: 240, facingMode: "user" } 
+                video: { width: 320, height: 240, facingMode: "user" },
+                audio: false 
             });
+            
             video.srcObject = stream;
+            camLog.innerText = "Status: Stream Acquired. Loading...";
+            
+            // Force play (sometimes browsers pause it)
+            video.play();
+            
             video.onloadeddata = () => {
-                startGame();
+                camLog.innerText = "Status: Active! (" + video.videoWidth + "x" + video.videoHeight + ")";
+                camLog.style.color = "#2ecc71";
+                startBtn.innerText = "PLAY GAME";
+                startBtn.onclick = startGame;
+                startBtn.disabled = false;
             };
+
         } catch(e) {
-            document.getElementById('error-msg').innerText = "Camera Blocked: " + e.message;
-            document.getElementById('error-msg').style.display = 'block';
-            startBtn.innerText = "PLAY MANUAL MODE";
+            camLog.innerText = "Error: " + e.name;
+            camLog.style.color = "red";
+            alert("Camera Error: " + e.message + "\n\nTry opening in Safari/Chrome explicitly.");
+            startBtn.innerText = "RETRY";
             startBtn.disabled = false;
-            startBtn.onclick = () => { startGame(true); }; // True = Manual Mode
         }
     }
 
-    function startGame(manual = false) {
+    function startGame() {
         document.getElementById('ui').style.display = 'none';
-        hud.style.display = 'block';
+        document.getElementById('hud').style.display = 'block';
         gameRunning = true;
-        
-        if (manual) {
-            statusText.innerText = "CLICK TO JUMP";
-            window.addEventListener('mousedown', jump);
-            window.addEventListener('touchstart', jump);
-        } else {
-            // Start Motion Loop
-            processMotion();
-        }
+        processMotion();
         gameLoop();
     }
 
-    // --- 2. PIXEL MOTION DETECTION (No Libraries!) ---
+    // --- 2. SIMPLE MOTION DETECTION ---
     function processMotion() {
         if (!gameRunning) return;
 
-        // Create a small work canvas for processing
+        const w = 100; const h = 75;
         const workCanvas = document.createElement('canvas');
-        workCanvas.width = 100; // Low res for speed
-        workCanvas.height = 75;
+        workCanvas.width = w; workCanvas.height = h;
         const workCtx = workCanvas.getContext('2d');
-
-        // Draw current video frame
-        workCtx.drawImage(video, 0, 0, 100, 75);
-        const frame = workCtx.getImageData(0, 0, 100, 75);
-        const data = frame.data;
+        
+        workCtx.drawImage(video, 0, 0, w, h);
+        const data = workCtx.getImageData(0, 0, w, h).data;
 
         if (prevFrame) {
             let diff = 0;
-            // Compare every 4th pixel to save CPU
-            for (let i = 0; i < data.length; i += 4 * 4) {
-                // Simple grayscale difference
-                const r = Math.abs(data[i] - prevFrame[i]);
-                const g = Math.abs(data[i+1] - prevFrame[i+1]);
-                const b = Math.abs(data[i+2] - prevFrame[i+2]);
-                if (r+g+b > 100) diff++; // If pixel changed significantly
+            // Check every 8th pixel (faster)
+            for (let i = 0; i < data.length; i += 8 * 4) {
+                if (Math.abs(data[i] - prevFrame[i]) > 20) diff++;
             }
-            
-            // Normalize motion score (0 to 100)
-            motionScore = Math.min(100, diff / 5); 
+            motionScore = Math.min(100, diff / 2);
         }
-
         prevFrame = data;
-        
-        // UI Update
-        const thresh = parseInt(document.getElementById('sens-slider').value);
-        document.getElementById('thresh-marker').style.left = thresh + "%";
+
+        // UI
         motionBar.style.width = motionScore + "%";
+        let thresh = parseInt(document.getElementById('sens-slider').value);
         
-        if (motionScore > thresh) {
-            statusText.innerText = "DETECTED!";
-            statusText.style.color = "#2ecc71";
-            jump();
+        if (motionScore > thresh && player.grounded) {
+             player.vy = -12; player.grounded = false;
+             motionBar.style.background = "#fff"; // Flash white on jump
         } else {
-            statusText.innerText = "Scanning...";
-            statusText.style.color = "#ccc";
+             motionBar.style.background = "#e74c3c";
         }
 
         requestAnimationFrame(processMotion);
     }
 
-    // --- 3. GAME LOGIC ---
-    function jump() {
-        if (player.grounded) {
-            player.vy = -12;
-            player.grounded = false;
-        }
-    }
-
+    // --- 3. GAME ENGINE ---
     function gameLoop() {
         if (!gameRunning) return;
 
-        // Physics
-        player.vy += 0.6; 
-        player.y += player.vy;
+        player.vy += 0.6; player.y += player.vy;
 
-        // Floor Collision
+        // Ground check
         let onGround = false;
         obstacles.forEach(o => {
             if(o.type==='floor' && player.x > o.x && player.x < o.x + o.w && player.y > 300) {
@@ -208,13 +189,12 @@
             }
         });
         
-        // Run Logic
         if (onGround || !player.grounded) {
             distance += 5;
             obstacles.forEach(o => o.x -= 5);
         }
 
-        // Spawn Terrain
+        // Spawn
         let last = obstacles[obstacles.length-1];
         if(last.x + last.w < 850) {
             let isPit = Math.random() < 0.2;
@@ -226,15 +206,11 @@
             }
         }
 
-        // Hit Detection
+        // Collisions
         obstacles.forEach(o => {
-            if(o.type==='tree' && player.x > o.x && player.x < o.x+o.w && player.y > 290) {
-                 gameOver();
-            }
+             if(o.type==='tree' && player.x>o.x && player.x<o.x+o.w && player.y>290) gameOver();
         });
         if(player.y > 450) gameOver();
-
-        // Cleanup
         obstacles = obstacles.filter(o => o.x + o.w > -100);
 
         draw();
@@ -243,22 +219,15 @@
 
     function draw() {
         ctx.clearRect(0,0,800,400);
-        
-        // Sky
         ctx.fillStyle = "#87CEEB"; ctx.fillRect(0,0,800,400);
-
-        // Obstacles
+        
         obstacles.forEach(o => {
-            if(o.type==='floor') { ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); ctx.fillStyle='#2ecc71'; ctx.fillRect(o.x,o.y,o.w,10);}
+            if(o.type==='floor') { ctx.fillStyle='#5d4037'; ctx.fillRect(o.x,o.y,o.w,o.h); ctx.fillStyle='#2ecc71'; ctx.fillRect(o.x,o.y,o.w,10); }
             if(o.type==='tree') { ctx.fillStyle='#27ae60'; ctx.beginPath(); ctx.moveTo(o.x+15,o.y); ctx.lineTo(o.x,o.y+60); ctx.lineTo(o.x+30,o.y+60); ctx.fill(); }
         });
-        
-        // Player
+
         ctx.fillStyle = (player.grounded) ? '#8B4513' : '#e67e22';
         ctx.fillRect(player.x, player.y, 30, 30);
-        ctx.fillStyle = "red"; ctx.fillRect(player.x+22, player.y+5, 5, 5); // Nose
-        
-        // Score
         ctx.fillStyle = "black"; ctx.font = "bold 20px monospace";
         ctx.fillText(`Dist: ${Math.floor(distance/10)}m`, 20, 30);
     }
